@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  chat-server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: chat-server
+    restart: unless-stopped
+    ports:
+      - "8443:8443"
+      - "8080:8080"
+    volumes:
+      - ./certs:/app/certs:ro
+      - chat-data:/app/data
+      - ./config.json:/app/config/config.json:ro
+    environment:
+      - LOG_LEVEL=info
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - chat-network
+
+  # Optional: Redis for horizontal scaling
+  redis:
+    image: redis:7-alpine
+    container_name: chat-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - chat-network
+    profiles:
+      - scaling
+
+  # Optional: PostgreSQL for production storage
+  postgres:
+    image: postgres:15-alpine
+    container_name: chat-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: chat
+      POSTGRES_PASSWORD: changeme
+      POSTGRES_DB: chat
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - chat-network
+    profiles:
+      - production
+
+volumes:
+  chat-data:
+  redis-data:
+  postgres-data:
+
+networks:
+  chat-network:
+    driver: bridge
+

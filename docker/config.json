@@ -1,0 +1,20 @@
+{
+    "bind_address": "0.0.0.0",
+    "port": 8443,
+    "health_port": 8080,
+    "thread_pool_size": 4,
+    "cert_file": "/app/certs/server.crt",
+    "key_file": "/app/certs/server.key",
+    "dh_file": "/app/certs/dh2048.pem",
+    "storage_type": "sqlite",
+    "sqlite_path": "/app/data/chat.db",
+    "postgres_conn": "",
+    "redis_enabled": false,
+    "redis_host": "redis",
+    "redis_port": 6379,
+    "rate_limit_messages_per_second": 10,
+    "rate_limit_burst": 20,
+    "log_level": "info",
+    "log_file": ""
+}
+

@@ -1,0 +1,33 @@
+# Build directories
+build/
+cmake-build-*/
+
+# Database files
+*.db
+*.db-wal
+*.db-shm
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Compiled objects
+*.o
+*.obj
+*.a
+*.so
+*.dylib
+
+# Test artifacts
+/tmp/
+test_client.sh
+
+# Certificates (don't commit real certs in production)
+# certs/ are self-signed dev certs, kept for convenience
+
