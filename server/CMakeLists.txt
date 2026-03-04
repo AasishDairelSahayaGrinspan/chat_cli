@@ -22,12 +22,14 @@ target_link_libraries(chat_server PRIVATE
     Threads::Threads
     OpenSSL::SSL
     OpenSSL::Crypto
-    ${SQLITE3_LIBRARIES}
-    ${SODIUM_LIBRARIES}
+    ${SQLITE3_TARGET_LIBS}
+    ${SODIUM_TARGET_LIBS}
 )
 
-target_include_directories(chat_server PRIVATE
-    ${SQLITE3_INCLUDE_DIRS}
-    ${SODIUM_INCLUDE_DIRS}
-)
+if(SQLITE3_TARGET_INCLUDES)
+    target_include_directories(chat_server PRIVATE ${SQLITE3_TARGET_INCLUDES})
+endif()
+if(SODIUM_TARGET_INCLUDES)
+    target_include_directories(chat_server PRIVATE ${SODIUM_TARGET_INCLUDES})
+endif()
 

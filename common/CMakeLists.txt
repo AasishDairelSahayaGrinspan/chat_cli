@@ -9,10 +9,10 @@ target_link_libraries(chat_common INTERFACE
     spdlog::spdlog
     OpenSSL::SSL
     OpenSSL::Crypto
-    ${SODIUM_LIBRARIES}
+    ${SODIUM_TARGET_LIBS}
 )
 
-target_include_directories(chat_common INTERFACE
-    ${SODIUM_INCLUDE_DIRS}
-)
+if(SODIUM_TARGET_INCLUDES)
+    target_include_directories(chat_common INTERFACE ${SODIUM_TARGET_INCLUDES})
+endif()
 

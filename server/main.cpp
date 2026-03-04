@@ -97,7 +97,11 @@ int main(int argc, char* argv[]) {
                              session_manager, *storage);
 
         // Setup signal handling
+#ifdef SIGTERM
         asio::signal_set signals(server.io_context(), SIGINT, SIGTERM);
+#else
+        asio::signal_set signals(server.io_context(), SIGINT);
+#endif
         signals.async_wait([&](const std::error_code&, int sig) {
             LOG_INFO("Received signal {}, initiating shutdown...", sig);
             shutdown_requested = true;

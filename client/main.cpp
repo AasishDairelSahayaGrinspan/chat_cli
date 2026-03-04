@@ -37,7 +37,9 @@ int main(int argc, char* argv[]) {
 
     // Setup signal handling
     std::signal(SIGINT, signal_handler);
+#ifdef SIGTERM
     std::signal(SIGTERM, signal_handler);
+#endif
 
     // Create components
     UiRenderer renderer;
