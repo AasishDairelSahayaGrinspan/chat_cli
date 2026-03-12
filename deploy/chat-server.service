@@ -1,0 +1,16 @@
+[Unit]
+Description=Chat CLI Server
+After=network.target
+
+[Service]
+Type=simple
+User=azureuser
+WorkingDirectory=/home/azureuser/chat_cli
+ExecStart=/home/azureuser/chat_cli/build/server/chat_server
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
