@@ -36,7 +36,7 @@ find_package(SQLite3 QUIET)
 if(NOT SQLite3_FOUND)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(SQLITE3 REQUIRED sqlite3)
-    set(SQLITE3_TARGET_LIBS ${SQLITE3_LIBRARIES})
+    set(SQLITE3_TARGET_LIBS ${SQLITE3_LINK_LIBRARIES})
     set(SQLITE3_TARGET_INCLUDES ${SQLITE3_INCLUDE_DIRS})
 else()
     set(SQLITE3_TARGET_LIBS SQLite::SQLite3)
@@ -52,7 +52,7 @@ else()
     find_package(PkgConfig QUIET)
     if(PkgConfig_FOUND)
         pkg_check_modules(SODIUM REQUIRED libsodium)
-        set(SODIUM_TARGET_LIBS ${SODIUM_LIBRARIES})
+        set(SODIUM_TARGET_LIBS ${SODIUM_LINK_LIBRARIES})
         set(SODIUM_TARGET_INCLUDES ${SODIUM_INCLUDE_DIRS})
     else()
         # Manual find for platforms without pkg-config
@@ -101,7 +101,15 @@ FetchContent_Declare(
     GIT_TAG v1.13.0
 )
 
-FetchContent_MakeAvailable(json spdlog)
+# FTXUI - Terminal UI library
+FetchContent_Declare(
+    ftxui
+    GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI.git
+    GIT_TAG v5.0.0
+    GIT_SHALLOW TRUE
+)
+
+FetchContent_MakeAvailable(json spdlog ftxui)
 
 # Common library
 add_subdirectory(common)

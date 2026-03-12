@@ -14,6 +14,7 @@ public:
                                                const std::vector<std::string>& args)>;
     using ChatCallback = std::function<void(const std::string& message)>;
     using QuitCallback = std::function<void()>;
+    using ErrorCallback = std::function<void(const std::string&)>;
 
     InputHandler(TlsClient& client);
 
@@ -22,6 +23,7 @@ public:
 
     // Set callbacks
     void set_quit_callback(QuitCallback cb) { quit_callback_ = std::move(cb); }
+    void set_error_callback(ErrorCallback cb) { error_callback_ = std::move(cb); }
 
     // Get current room
     const std::string& current_room() const { return current_room_; }
@@ -34,9 +36,13 @@ public:
     const std::string& username() const { return username_; }
     void set_username(const std::string& name) { username_ = name; }
 
+    // Available commands for tab completion
+    static const std::vector<std::string>& available_commands();
+
 private:
     void handle_command(const std::string& cmd, const std::vector<std::string>& args);
     std::vector<std::string> split_args(const std::string& input);
+    void report_error(const std::string& error);
 
     TlsClient& client_;
 
@@ -45,7 +51,7 @@ private:
     bool authenticated_ = false;
 
     QuitCallback quit_callback_;
+    ErrorCallback error_callback_;
 };
 
 } // namespace chat::client
-

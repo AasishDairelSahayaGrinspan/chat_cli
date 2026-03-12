@@ -1,10 +1,23 @@
 #include "input_handler.hpp"
 #include <algorithm>
-#include <iostream>
 
 namespace chat::client {
 
 InputHandler::InputHandler(TlsClient& client) : client_(client) {}
+
+const std::vector<std::string>& InputHandler::available_commands() {
+    static const std::vector<std::string> commands = {
+        "/login", "/register", "/join", "/leave", "/rooms",
+        "/users", "/dm", "/rename", "/quit", "/exit", "/help"
+    };
+    return commands;
+}
+
+void InputHandler::report_error(const std::string& error) {
+    if (error_callback_) {
+        error_callback_(error);
+    }
+}
 
 void InputHandler::process_line(const std::string& line) {
     if (line.empty()) return;
@@ -41,7 +54,7 @@ void InputHandler::handle_command(const std::string& cmd,
 
     if (cmd == "login") {
         if (args.size() < 2) {
-            std::cout << "Usage: /login <username> <password>" << std::endl;
+            report_error("Usage: /login <username> <password>");
             return;
         }
         nlohmann::json payload = {
@@ -54,7 +67,7 @@ void InputHandler::handle_command(const std::string& cmd,
 
     if (cmd == "register") {
         if (args.size() < 2) {
-            std::cout << "Usage: /register <username> <password>" << std::endl;
+            report_error("Usage: /register <username> <password>");
             return;
         }
         nlohmann::json payload = {
@@ -67,7 +80,7 @@ void InputHandler::handle_command(const std::string& cmd,
 
     if (cmd == "join" || cmd == "j") {
         if (args.empty()) {
-            std::cout << "Usage: /join <room>" << std::endl;
+            report_error("Usage: /join <room>");
             return;
         }
         nlohmann::json payload = {{"room", args[0]}};
@@ -95,7 +108,7 @@ void InputHandler::handle_command(const std::string& cmd,
 
     if (cmd == "dm" || cmd == "msg" || cmd == "pm") {
         if (args.size() < 2) {
-            std::cout << "Usage: /dm <user> <message>" << std::endl;
+            report_error("Usage: /dm <user> <message>");
             return;
         }
         std::string message;
@@ -113,7 +126,7 @@ void InputHandler::handle_command(const std::string& cmd,
 
     if (cmd == "rename" || cmd == "nick") {
         if (args.empty()) {
-            std::cout << "Usage: /rename <newname>" << std::endl;
+            report_error("Usage: /rename <newname>");
             return;
         }
         nlohmann::json payload = {{"newname", args[0]}};
@@ -147,4 +160,3 @@ std::vector<std::string> InputHandler::split_args(const std::string& input) {
 }
 
 } // namespace chat::client
-

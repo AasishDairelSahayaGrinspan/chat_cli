@@ -3,6 +3,10 @@ add_executable(chat_client
     tls_client.cpp
     input_handler.cpp
     ui_renderer.cpp
+    ftxui_app.cpp
+    theme.cpp
+    message_store.cpp
+    banner.cpp
 )
 
 target_include_directories(chat_client PRIVATE
@@ -15,5 +19,7 @@ target_link_libraries(chat_client PRIVATE
     Threads::Threads
     OpenSSL::SSL
     OpenSSL::Crypto
+    ftxui::screen
+    ftxui::dom
+    ftxui::component
 )
-

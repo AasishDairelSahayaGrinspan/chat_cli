@@ -2,217 +2,121 @@
 
 namespace chat::client {
 
-void UiRenderer::render(const protocol::Message& msg) {
-    std::string timestamp = format_timestamp(msg.timestamp);
+ftxui::Element UiRenderer::render(const DisplayItem& item, const Theme& theme) {
+    ftxui::Element el;
 
-    switch (msg.type) {
-        case protocol::MessageType::MESSAGE: {
-            std::string content;
-            if (msg.payload.contains("message")) {
-                content = msg.payload["message"];
-            }
-
-            std::cout << color(GRAY) << "[" << timestamp << "] "
-                      << color(RESET);
-
-            if (!msg.room.empty()) {
-                std::cout << color(CYAN) << "#" << msg.room << " " << color(RESET);
-            }
-
-            std::cout << color(BOLD) << color(GREEN) << msg.from << color(RESET)
-                      << ": " << content << std::endl;
+    switch (item.kind) {
+        case DisplayItem::Kind::CHAT:
+            el = render_chat(item, theme);
             break;
-        }
-
-        case protocol::MessageType::DIRECT_MESSAGE: {
-            std::string from = msg.payload.value("from", msg.from);
-            std::string to = msg.payload.value("to", "");
-            std::string message = msg.payload.value("message", "");
-            bool sent = msg.payload.value("sent", false);
-
-            std::cout << color(GRAY) << "[" << timestamp << "] "
-                      << color(RESET) << color(MAGENTA);
-
-            if (sent) {
-                std::cout << "[DM -> " << to << "] ";
-            } else {
-                std::cout << "[DM <- " << from << "] ";
-            }
-
-            std::cout << color(RESET) << message << std::endl;
+        case DisplayItem::Kind::DM:
+            el = render_dm(item, theme);
             break;
-        }
-
-        case protocol::MessageType::SYSTEM: {
-            std::string message;
-            if (msg.payload.contains("message")) {
-                message = msg.payload["message"];
-            } else if (msg.payload.contains("action")) {
-                std::string action = msg.payload["action"];
-
-                if (action == "user_list") {
-                    std::cout << color(CYAN) << "Online users";
-                    if (msg.payload.contains("room") && !msg.payload["room"].get<std::string>().empty()) {
-                        std::cout << " in #" << msg.payload["room"].get<std::string>();
-                    }
-                    std::cout << ": " << color(RESET);
-
-                    if (msg.payload.contains("users")) {
-                        auto users = msg.payload["users"];
-                        bool first = true;
-                        for (const auto& user : users) {
-                            if (!first) std::cout << ", ";
-                            std::cout << user.get<std::string>();
-                            first = false;
-                        }
-                    }
-                    std::cout << " (" << msg.payload.value("count", 0) << " total)" << std::endl;
-                    return;
-                }
-
-                if (action == "room_list") {
-                    std::cout << color(CYAN) << "Available rooms:" << color(RESET) << std::endl;
-                    if (msg.payload.contains("rooms")) {
-                        for (const auto& room : msg.payload["rooms"]) {
-                            std::cout << "  #" << room["name"].get<std::string>();
-                            if (room.contains("users")) {
-                                std::cout << " (" << room["users"].get<int>() << " users)";
-                            }
-                            if (room.contains("description") &&
-                                !room["description"].get<std::string>().empty()) {
-                                std::cout << " - " << room["description"].get<std::string>();
-                            }
-                            std::cout << std::endl;
-                        }
-                    }
-                    return;
-                }
-            }
-
-            if (!message.empty()) {
-                std::cout << color(CYAN) << "* " << message << color(RESET) << std::endl;
-            }
+        case DisplayItem::Kind::SYSTEM:
+            el = render_system(item, theme);
             break;
-        }
-
-        case protocol::MessageType::ERROR: {
-            std::string message = msg.payload.value("message", "Unknown error");
-            std::string code = msg.payload.value("code", "ERROR");
-
-            std::cout << color(RED) << "Error [" << code << "]: "
-                      << message << color(RESET) << std::endl;
+        case DisplayItem::Kind::ERROR:
+            el = render_error(item, theme);
             break;
-        }
-
-        case protocol::MessageType::PRESENCE: {
-            std::string action = msg.payload.value("action", "");
-            std::string user = msg.payload.value("user", msg.from);
-
-            std::cout << color(YELLOW) << "* ";
-
-            if (action == "online") {
-                std::cout << user << " is now online";
-            } else if (action == "offline") {
-                std::cout << user << " has disconnected";
-            } else if (action == "join") {
-                std::cout << user << " joined #" << msg.room;
-            } else if (action == "leave") {
-                std::cout << user << " left #" << msg.room;
-            } else if (action == "rename") {
-                std::string old_name = msg.payload.value("old_name", "");
-                std::string new_name = msg.payload.value("new_name", "");
-                std::cout << old_name << " is now known as " << new_name;
-            } else {
-                std::cout << user << " " << action;
-            }
-
-            std::cout << color(RESET) << std::endl;
+        case DisplayItem::Kind::PRESENCE:
+            el = render_presence(item, theme);
             break;
-        }
-
-        case protocol::MessageType::AUTH_RESPONSE: {
-            bool success = msg.payload.value("success", false);
-            std::string message = msg.payload.value("message", "");
-
-            if (success) {
-                std::cout << color(GREEN) << "✓ " << message << color(RESET) << std::endl;
-            } else {
-                std::cout << color(RED) << "✗ " << message << color(RESET) << std::endl;
-            }
+        case DisplayItem::Kind::AUTH:
+            el = render_auth(item, theme);
             break;
-        }
-
-        case protocol::MessageType::ROOM_EVENT: {
-            std::string action = msg.payload.value("action", "");
-            std::string room = msg.payload.value("room", msg.room);
-
-            if (action == "joined") {
-                std::cout << color(CYAN) << "Joined #" << room;
-
-                if (msg.payload.contains("users")) {
-                    std::cout << " - Users: ";
-                    auto users = msg.payload["users"];
-                    bool first = true;
-                    for (const auto& user : users) {
-                        if (!first) std::cout << ", ";
-                        std::cout << user.get<std::string>();
-                        first = false;
-                    }
-                }
-
-                std::cout << color(RESET) << std::endl;
-            } else if (action == "left") {
-                std::cout << color(CYAN) << "Left #" << room << color(RESET) << std::endl;
-            }
+        case DisplayItem::Kind::ROOM_EVENT:
+            el = render_room_event(item, theme);
             break;
-        }
-
-        default:
-            // Just dump the message for debugging
-            std::cout << color(GRAY) << "[DEBUG] " << nlohmann::json(msg).dump()
-                      << color(RESET) << std::endl;
+        case DisplayItem::Kind::STATUS:
+            el = render_status(item, theme);
             break;
+    }
+
+    // Fade-in effect for new messages
+    if (item.is_new) {
+        el = el | ftxui::dim;
+    }
+
+    return el;
+}
+
+ftxui::Element UiRenderer::render_chat(const DisplayItem& item, const Theme& theme) {
+    ftxui::Elements parts;
+
+    parts.push_back(
+        ftxui::text("[" + item.timestamp + "] ") | ftxui::color(theme.dim_text)
+    );
+
+    if (!item.room.empty()) {
+        parts.push_back(
+            ftxui::text("#" + item.room + " ") | ftxui::color(theme.room_name)
+        );
+    }
+
+    parts.push_back(
+        ftxui::text(item.sender) | ftxui::bold | ftxui::color(theme.username)
+    );
+    parts.push_back(ftxui::text(": " + item.content));
+
+    return ftxui::hbox(parts);
+}
+
+ftxui::Element UiRenderer::render_dm(const DisplayItem& item, const Theme& theme) {
+    ftxui::Elements parts;
+
+    parts.push_back(
+        ftxui::text("[" + item.timestamp + "] ") | ftxui::color(theme.dim_text)
+    );
+    parts.push_back(
+        ftxui::text(item.content) | ftxui::color(theme.dm_color)
+    );
+
+    return ftxui::hbox(parts);
+}
+
+ftxui::Element UiRenderer::render_system(const DisplayItem& item, const Theme& theme) {
+    return ftxui::hbox({
+        ftxui::text("* ") | ftxui::color(theme.system_msg),
+        ftxui::text(item.content) | ftxui::color(theme.system_msg),
+    });
+}
+
+ftxui::Element UiRenderer::render_error(const DisplayItem& item, const Theme& theme) {
+    return ftxui::hbox({
+        ftxui::text("✗ Error: ") | ftxui::bold | ftxui::color(theme.error),
+        ftxui::text(item.content) | ftxui::color(theme.error),
+    });
+}
+
+ftxui::Element UiRenderer::render_presence(const DisplayItem& item, const Theme& theme) {
+    return ftxui::hbox({
+        ftxui::text("● ") | ftxui::color(theme.presence),
+        ftxui::text(item.content) | ftxui::color(theme.presence),
+    });
+}
+
+ftxui::Element UiRenderer::render_auth(const DisplayItem& item, const Theme& theme) {
+    bool success = item.content.size() >= 2 && item.content[0] == '\xe2'; // ✓ starts with UTF-8 ✓
+    // Check first char for success/failure marker
+    if (item.original.payload.value("success", false)) {
+        return ftxui::text(item.content) | ftxui::color(theme.success);
+    } else {
+        return ftxui::text(item.content) | ftxui::color(theme.error);
     }
 }
 
-void UiRenderer::print_status(const std::string& status) {
-    std::cout << color(CYAN) << "* " << status << color(RESET) << std::endl;
+ftxui::Element UiRenderer::render_room_event(const DisplayItem& item, const Theme& theme) {
+    return ftxui::hbox({
+        ftxui::text("→ ") | ftxui::color(theme.system_msg),
+        ftxui::text(item.content) | ftxui::color(theme.system_msg),
+    });
 }
 
-void UiRenderer::print_error(const std::string& error) {
-    std::cout << color(RED) << "Error: " << error << color(RESET) << std::endl;
-}
-
-void UiRenderer::print_prompt(const std::string& username, const std::string& room) {
-    std::cout << color(BOLD);
-
-    if (!username.empty()) {
-        std::cout << color(GREEN) << username << color(RESET) << color(BOLD);
-    }
-
-    if (!room.empty()) {
-        std::cout << color(CYAN) << " #" << room;
-    }
-
-    std::cout << color(RESET) << "> " << std::flush;
-}
-
-void UiRenderer::clear_line() {
-    std::cout << "\r\033[K" << std::flush;
-}
-
-std::string UiRenderer::format_timestamp(int64_t timestamp) {
-    time_t time = static_cast<time_t>(timestamp);
-    struct tm* tm_info = localtime(&time);
-
-    char buffer[16];
-    strftime(buffer, sizeof(buffer), "%H:%M:%S", tm_info);
-    return buffer;
-}
-
-std::string UiRenderer::color(const std::string& code) {
-    return colors_enabled_ ? code : "";
+ftxui::Element UiRenderer::render_status(const DisplayItem& item, const Theme& theme) {
+    return ftxui::hbox({
+        ftxui::text("* ") | ftxui::color(theme.system_msg),
+        ftxui::text(item.content) | ftxui::dim,
+    });
 }
 
 } // namespace chat::client
-
