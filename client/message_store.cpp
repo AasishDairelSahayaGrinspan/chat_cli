@@ -73,6 +73,9 @@ DisplayItem MessageStore::convert(const protocol::Message& msg) const {
             std::string to = msg.payload.value("to", "");
             std::string message = msg.payload.value("message", "");
             bool sent = msg.payload.value("sent", false);
+            bool is_encrypted = msg.payload.value("encrypted", false) ||
+                                msg.payload.value("e2ee", false);
+            item.encrypted = is_encrypted;
             if (sent) {
                 item.content = "[DM -> " + to + "] " + message;
             } else {

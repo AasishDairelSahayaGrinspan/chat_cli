@@ -17,6 +17,7 @@ struct DisplayItem {
     std::string room;
     std::string content;
     bool is_new = true;  // For fade-in animation
+    bool encrypted = false;  // E2EE indicator
     protocol::Message original;
 };
 

@@ -7,6 +7,7 @@ add_executable(chat_client
     theme.cpp
     message_store.cpp
     banner.cpp
+    crypto.cpp
 )
 
 target_include_directories(chat_client PRIVATE
@@ -22,4 +23,9 @@ target_link_libraries(chat_client PRIVATE
     ftxui::screen
     ftxui::dom
     ftxui::component
+    ${SODIUM_TARGET_LIBS}
 )
+
+if(SODIUM_TARGET_INCLUDES)
+    target_include_directories(chat_client PRIVATE ${SODIUM_TARGET_INCLUDES})
+endif()

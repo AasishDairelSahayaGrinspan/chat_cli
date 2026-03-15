@@ -35,6 +35,11 @@ public:
                                                   size_t limit = 50,
                                                   uint64_t before_id = 0) override;
 
+    // Key storage for E2EE
+    bool store_public_key(uint64_t user_id, const std::string& public_key) override;
+    std::optional<std::string> get_public_key(uint64_t user_id) override;
+    std::optional<std::string> get_public_key_by_username(const std::string& username) override;
+
     // Health check
     bool is_healthy() override;
 

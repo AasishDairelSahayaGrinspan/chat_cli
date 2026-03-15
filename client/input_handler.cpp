@@ -3,7 +3,8 @@
 
 namespace chat::client {
 
-InputHandler::InputHandler(TlsClient& client) : client_(client) {}
+InputHandler::InputHandler(TlsClient& client, KeyManager& key_manager)
+    : client_(client), key_manager_(key_manager) {}
 
 const std::vector<std::string>& InputHandler::available_commands() {
     static const std::vector<std::string> commands = {
@@ -111,15 +112,37 @@ void InputHandler::handle_command(const std::string& cmd,
             report_error("Usage: /dm <user> <message>");
             return;
         }
+        std::string recipient = args[0];
         std::string message;
         for (size_t i = 1; i < args.size(); ++i) {
             if (i > 1) message += " ";
             message += args[i];
         }
         nlohmann::json payload = {
-            {"to", args[0]},
+            {"to", recipient},
             {"message", message}
         };
+
+        // Attempt E2EE encryption if we have the recipient's key
+        auto cached_key = key_manager_.get_cached_key(recipient);
+        if (cached_key.has_value() && key_manager_.is_initialized()) {
+            auto encrypted = key_manager_.encrypt(message, cached_key.value());
+            if (encrypted.has_value()) {
+                payload["message"] = encrypted->ciphertext;
+                payload["nonce"] = encrypted->nonce;
+                payload["sender_public_key"] = key_manager_.get_public_key();
+                payload["encrypted"] = true;
+            }
+        } else if (key_manager_.is_initialized()) {
+            // Request the recipient's key for next time
+            auto key_req = protocol::Message::create(protocol::MessageType::KEY_EXCHANGE, username_);
+            key_req.payload = {
+                {"action", "request_key"},
+                {"username", recipient}
+            };
+            client_.send(key_req);
+        }
+
         client_.send_command("dm", payload);
         return;
     }

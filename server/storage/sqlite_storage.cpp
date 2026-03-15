@@ -77,6 +77,15 @@ void SqliteStorage::init_schema() {
     exec("CREATE INDEX IF NOT EXISTS idx_messages_room ON messages(room, created_at)");
     exec("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)");
 
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS user_keys (
+            user_id INTEGER PRIMARY KEY REFERENCES users(id),
+            public_key TEXT NOT NULL,
+            created_at INTEGER DEFAULT (strftime('%s', 'now')),
+            updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+        )
+    )");
+
     // Create default general room (inline to avoid mutex deadlock)
     {
         const char* sql = "INSERT OR IGNORE INTO rooms (name, description, created_at) VALUES ('general', 'General discussion', strftime('%s','now'))";
@@ -383,6 +392,76 @@ std::vector<StoredMessage> SqliteStorage::get_room_messages(const std::string& r
     // Reverse to get chronological order
     std::reverse(messages.begin(), messages.end());
     return messages;
+}
+
+bool SqliteStorage::store_public_key(uint64_t user_id, const std::string& public_key) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    const char* sql = "INSERT OR REPLACE INTO user_keys (user_id, public_key, updated_at) "
+                      "VALUES (?, ?, strftime('%s', 'now'))";
+    sqlite3_stmt* stmt = nullptr;
+
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        LOG_ERROR("Failed to prepare store_public_key: {}", sqlite3_errmsg(db_));
+        return false;
+    }
+
+    sqlite3_bind_int64(stmt, 1, static_cast<int64_t>(user_id));
+    sqlite3_bind_text(stmt, 2, public_key.c_str(), -1, SQLITE_TRANSIENT);
+
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    if (rc != SQLITE_DONE) {
+        LOG_WARN("Failed to store public key for user {}: {}", user_id, sqlite3_errmsg(db_));
+        return false;
+    }
+
+    return true;
+}
+
+std::optional<std::string> SqliteStorage::get_public_key(uint64_t user_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    const char* sql = "SELECT public_key FROM user_keys WHERE user_id = ?";
+    sqlite3_stmt* stmt = nullptr;
+
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return std::nullopt;
+    }
+
+    sqlite3_bind_int64(stmt, 1, static_cast<int64_t>(user_id));
+
+    std::optional<std::string> result;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        result = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+    }
+
+    sqlite3_finalize(stmt);
+    return result;
+}
+
+std::optional<std::string> SqliteStorage::get_public_key_by_username(const std::string& username) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    const char* sql = "SELECT uk.public_key FROM user_keys uk "
+                      "JOIN users u ON uk.user_id = u.id "
+                      "WHERE u.username = ?";
+    sqlite3_stmt* stmt = nullptr;
+
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return std::nullopt;
+    }
+
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_TRANSIENT);
+
+    std::optional<std::string> result;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        result = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+    }
+
+    sqlite3_finalize(stmt);
+    return result;
 }
 
 bool SqliteStorage::is_healthy() {

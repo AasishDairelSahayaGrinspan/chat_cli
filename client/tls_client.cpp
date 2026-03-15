@@ -1,19 +1,35 @@
 #include "tls_client.hpp"
 #include "logging/logger.hpp"
 
+#include <openssl/ssl.h>
+
 namespace chat::client {
 
-TlsClient::TlsClient(const std::string& host, uint16_t port, bool verify_ssl)
+TlsClient::TlsClient(const std::string& host, uint16_t port, bool verify_ssl, const std::string& ca_cert_path)
     : host_(host),
       port_(port),
       verify_ssl_(verify_ssl),
-      ssl_context_(asio::ssl::context::tlsv12_client),
+      ca_cert_path_(ca_cert_path),
+      ssl_context_(asio::ssl::context::tls_client),
       resolver_(io_context_) {
 
-    // Configure SSL context
+    // Disable old protocols
+    ssl_context_.set_options(
+        asio::ssl::context::default_workarounds |
+        asio::ssl::context::no_sslv2 |
+        asio::ssl::context::no_sslv3 |
+        asio::ssl::context::no_tlsv1 |
+        asio::ssl::context::no_tlsv1_1
+    );
+
     if (verify_ssl_) {
         ssl_context_.set_verify_mode(asio::ssl::verify_peer);
-        ssl_context_.set_default_verify_paths();
+        if (!ca_cert_path_.empty()) {
+            ssl_context_.load_verify_file(ca_cert_path_);
+        } else {
+            ssl_context_.set_default_verify_paths();
+        }
+        ssl_context_.set_verify_callback(asio::ssl::host_name_verification(host_));
     } else {
         ssl_context_.set_verify_mode(asio::ssl::verify_none);
     }
@@ -61,6 +77,9 @@ void TlsClient::do_connect(tcp::resolver::results_type endpoints) {
 }
 
 void TlsClient::do_handshake() {
+    // Set SNI hostname
+    SSL_set_tlsext_host_name(socket_->native_handle(), host_.c_str());
+
     socket_->async_handshake(
         asio::ssl::stream_base::client,
         [this](const std::error_code& ec) {

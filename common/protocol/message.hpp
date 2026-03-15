@@ -20,6 +20,7 @@ enum class MessageType {
     AUTH_RESPONSE,
     ROOM_EVENT,
     DIRECT_MESSAGE,
+    KEY_EXCHANGE,
     HEALTH
 };
 
@@ -33,6 +34,7 @@ NLOHMANN_JSON_SERIALIZE_ENUM(MessageType, {
     {MessageType::AUTH_RESPONSE, "auth_response"},
     {MessageType::ROOM_EVENT, "room_event"},
     {MessageType::DIRECT_MESSAGE, "direct_message"},
+    {MessageType::KEY_EXCHANGE, "key_exchange"},
     {MessageType::HEALTH, "health"}
 })
 

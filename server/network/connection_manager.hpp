@@ -31,6 +31,7 @@ public:
 
     size_t count() const;
     size_t authenticated_count() const;
+    size_t count_by_ip(const std::string& ip) const;
 
     void close_all();
 

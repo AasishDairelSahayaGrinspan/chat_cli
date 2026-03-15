@@ -32,6 +32,16 @@ public:
     bool store_message(const StoredMessage&) override { return false; }
     std::vector<StoredMessage> get_room_messages(const std::string&, size_t, uint64_t) override { return {}; }
 
+    bool store_public_key(uint64_t, const std::string&) override {
+        throw std::runtime_error("PostgreSQL not implemented");
+    }
+    std::optional<std::string> get_public_key(uint64_t) override {
+        throw std::runtime_error("PostgreSQL not implemented");
+    }
+    std::optional<std::string> get_public_key_by_username(const std::string&) override {
+        throw std::runtime_error("PostgreSQL not implemented");
+    }
+
     bool is_healthy() override { return false; }
     void init_schema() override {}
 };

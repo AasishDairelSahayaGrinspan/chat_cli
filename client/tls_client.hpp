@@ -22,7 +22,7 @@ public:
     using ConnectHandler = std::function<void(bool success, const std::string& error)>;
     using DisconnectHandler = std::function<void(const std::string& reason)>;
 
-    TlsClient(const std::string& host, uint16_t port, bool verify_ssl = false);
+    TlsClient(const std::string& host, uint16_t port, bool verify_ssl = true, const std::string& ca_cert_path = "");
     ~TlsClient();
 
     // Non-copyable
@@ -64,6 +64,7 @@ private:
     std::string host_;
     uint16_t port_;
     bool verify_ssl_;
+    std::string ca_cert_path_;
 
     asio::io_context io_context_;
     asio::ssl::context ssl_context_;

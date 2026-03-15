@@ -85,16 +85,19 @@ bool AuthService::is_valid_password(const std::string& password) {
         return false;
     }
 
-    // Require at least one letter and one digit
-    bool has_letter = false;
+    bool has_upper = false;
+    bool has_lower = false;
     bool has_digit = false;
+    bool has_special = false;
 
     for (char c : password) {
-        if (std::isalpha(static_cast<unsigned char>(c))) has_letter = true;
-        if (std::isdigit(static_cast<unsigned char>(c))) has_digit = true;
+        if (std::isupper(static_cast<unsigned char>(c))) has_upper = true;
+        else if (std::islower(static_cast<unsigned char>(c))) has_lower = true;
+        else if (std::isdigit(static_cast<unsigned char>(c))) has_digit = true;
+        else has_special = true;
     }
 
-    return has_letter && has_digit;
+    return has_upper && has_lower && has_digit && has_special;
 }
 
 std::string AuthService::result_message(Result result) {
@@ -106,7 +109,7 @@ std::string AuthService::result_message(Result result) {
                    "and contain only letters, numbers, underscores, or hyphens.";
         case Result::INVALID_PASSWORD:
             return "Invalid password. Must be 8-128 characters with at least "
-                   "one letter and one number.";
+                   "one uppercase letter, one lowercase letter, one digit, and one special character.";
         case Result::USER_EXISTS:
             return "Username already taken.";
         case Result::USER_NOT_FOUND:

@@ -6,7 +6,7 @@ namespace chat::server {
 TlsServer::TlsServer(const config::ServerConfig& config)
     : config_(config),
       io_context_(static_cast<int>(config.thread_pool_size)),
-      ssl_context_(asio::ssl::context::tlsv12_server),
+      ssl_context_(asio::ssl::context::tls_server),
       acceptor_(io_context_) {
     setup_ssl_context();
 }
@@ -116,6 +116,29 @@ void TlsServer::do_accept() {
                     LOG_ERROR("Accept error: {}", ec.message());
                 }
             } else {
+                // Check max connections
+                if (connection_manager_.count() >= config_.max_connections) {
+                    LOG_WARN("Max connections ({}) reached, rejecting new connection", config_.max_connections);
+                    std::error_code ec;
+                    conn->socket().shutdown(tcp::socket::shutdown_both, ec);
+                    conn->socket().close(ec);
+                    do_accept();
+                    return;
+                }
+
+                // Check per-IP limit
+                try {
+                    auto remote_ip = conn->socket().remote_endpoint().address().to_string();
+                    if (connection_manager_.count_by_ip(remote_ip) >= config_.max_connections_per_ip) {
+                        LOG_WARN("Max connections per IP ({}) reached for {}", config_.max_connections_per_ip, remote_ip);
+                        std::error_code ec;
+                        conn->socket().shutdown(tcp::socket::shutdown_both, ec);
+                        conn->socket().close(ec);
+                        do_accept();
+                        return;
+                    }
+                } catch (...) {}
+
                 connection_manager_.add(conn);
 
                 if (new_connection_handler_) {

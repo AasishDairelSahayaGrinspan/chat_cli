@@ -1,7 +1,9 @@
 #include "command_handler.hpp"
+#include "sanitize.hpp"
 #include "logging/logger.hpp"
 #include <sstream>
 #include <algorithm>
+#include <regex>
 
 namespace chat::server {
 
@@ -45,6 +47,14 @@ void CommandHandler::handle(Connection::Ptr conn, const protocol::Message& msg) 
                 } else if (action == "register") {
                     handle_register(conn, msg.payload);
                 }
+            }
+            break;
+
+        case protocol::MessageType::KEY_EXCHANGE:
+            if (conn->is_authenticated()) {
+                handle_key_exchange(conn, msg.payload);
+            } else {
+                send_error(conn, "Please login first", "NOT_AUTHENTICATED");
             }
             break;
 
@@ -98,9 +108,36 @@ void CommandHandler::handle_login(Connection::Ptr conn, const nlohmann::json& pa
     std::string username = payload["username"];
     std::string password = payload["password"];
 
+    // Brute-force protection: check lockout
+    {
+        std::lock_guard<std::mutex> lock(login_mutex_);
+        auto& attempt = login_attempts_[username];
+        auto now = std::chrono::steady_clock::now();
+
+        if (attempt.failed_count >= MAX_LOGIN_ATTEMPTS &&
+            now < attempt.lockout_until) {
+            auto remaining = std::chrono::duration_cast<std::chrono::seconds>(
+                attempt.lockout_until - now).count();
+            send_error(conn, "Too many failed login attempts. Try again in " +
+                       std::to_string(remaining) + " seconds.", "ACCOUNT_LOCKED");
+            return;
+        }
+    }
+
     auto [result, user_id] = auth_service_.login(username, password);
 
     if (result != AuthService::Result::SUCCESS) {
+        {
+            std::lock_guard<std::mutex> lock(login_mutex_);
+            auto& attempt = login_attempts_[username];
+            attempt.failed_count++;
+            attempt.last_attempt = std::chrono::steady_clock::now();
+            if (attempt.failed_count >= MAX_LOGIN_ATTEMPTS) {
+                attempt.lockout_until = std::chrono::steady_clock::now() +
+                    std::chrono::seconds(LOGIN_LOCKOUT_SECONDS);
+                LOG_WARN("Account '{}' locked out after {} failed attempts", username, attempt.failed_count);
+            }
+        }
         send_error(conn, AuthService::result_message(result), "AUTH_FAILED");
         return;
     }
@@ -142,6 +179,12 @@ void CommandHandler::handle_login(Connection::Ptr conn, const nlohmann::json& pa
     auto presence = protocol::Message::create(protocol::MessageType::PRESENCE, username);
     presence.payload = {{"action", "online"}, {"user", username}};
     conn_manager_.broadcast_except(conn->id(), presence);
+
+    // Clear failed login attempts on successful login
+    {
+        std::lock_guard<std::mutex> lock(login_mutex_);
+        login_attempts_.erase(username);
+    }
 
     LOG_INFO("User '{}' logged in from {}", username, conn->remote_address());
 }
@@ -187,6 +230,13 @@ void CommandHandler::handle_join(Connection::Ptr conn, const nlohmann::json& pay
     // Validate room name
     if (room.empty() || room.length() > protocol::MAX_ROOM_NAME_LENGTH) {
         send_error(conn, "Invalid room name", "INVALID_ROOM");
+        return;
+    }
+
+    // Validate room name format (same rules as usernames)
+    static const std::regex room_pattern("^[a-zA-Z][a-zA-Z0-9_-]*$");
+    if (!std::regex_match(room, room_pattern)) {
+        send_error(conn, "Invalid room name. Must start with a letter and contain only letters, numbers, underscores, or hyphens.", "INVALID_ROOM");
         return;
     }
 
@@ -269,6 +319,12 @@ void CommandHandler::handle_dm(Connection::Ptr conn, const nlohmann::json& paylo
 
     std::string target_user = payload["to"];
     std::string message = payload["message"];
+    bool is_encrypted = payload.value("encrypted", false);
+
+    // Only sanitize plaintext messages; encrypted ciphertext must pass through unchanged
+    if (!is_encrypted) {
+        message = chat::sanitize::sanitize_message(message);
+    }
 
     if (message.empty() || message.length() > protocol::MAX_MESSAGE_SIZE) {
         send_error(conn, "Invalid message", "INVALID_MESSAGE");
@@ -288,6 +344,18 @@ void CommandHandler::handle_dm(Connection::Ptr conn, const nlohmann::json& paylo
         {"to", target_user},
         {"message", message}
     };
+
+    // Forward E2EE fields if present
+    if (is_encrypted) {
+        dm.payload["encrypted"] = true;
+        if (payload.contains("nonce")) {
+            dm.payload["nonce"] = payload["nonce"];
+        }
+        if (payload.contains("sender_public_key")) {
+            dm.payload["sender_public_key"] = payload["sender_public_key"];
+        }
+    }
+
     target->send(dm);
 
     // Confirm to sender
@@ -298,10 +366,14 @@ void CommandHandler::handle_dm(Connection::Ptr conn, const nlohmann::json& paylo
         {"message", message},
         {"sent", true}
     };
+    if (is_encrypted) {
+        confirm.payload["encrypted"] = true;
+    }
     conn->send(confirm);
 
-    LOG_DEBUG("DM from '{}' to '{}': {}", conn->username(), target_user,
-              message.substr(0, 50));
+    LOG_DEBUG("DM from '{}' to '{}'{}: {}", conn->username(), target_user,
+              is_encrypted ? " [E2EE]" : "",
+              is_encrypted ? "(encrypted)" : message.substr(0, 50));
 }
 
 void CommandHandler::handle_rename(Connection::Ptr conn, const nlohmann::json& payload) {
@@ -429,6 +501,7 @@ void CommandHandler::handle_chat_message(Connection::Ptr conn, const protocol::M
     } else if (msg.payload.contains("content")) {
         content = msg.payload["content"];
     }
+    content = chat::sanitize::sanitize_message(content);
 
     if (content.empty()) {
         return;
@@ -535,6 +608,63 @@ bool CommandHandler::require_no_auth(Connection::Ptr conn) {
 
 bool CommandHandler::check_rate_limit(Connection::Ptr conn) {
     return session_manager_.check_rate_limit(conn->id());
+}
+
+void CommandHandler::handle_key_exchange(Connection::Ptr conn, const nlohmann::json& payload) {
+    if (!payload.contains("action")) {
+        send_error(conn, "Missing key exchange action", "INVALID_KEY_EXCHANGE");
+        return;
+    }
+
+    std::string action = payload["action"];
+
+    if (action == "publish_key") {
+        if (!payload.contains("public_key")) {
+            send_error(conn, "Missing public key", "INVALID_KEY_EXCHANGE");
+            return;
+        }
+
+        std::string public_key = payload["public_key"];
+
+        if (storage_.store_public_key(conn->user_id(), public_key)) {
+            auto response = protocol::Message::create(protocol::MessageType::KEY_EXCHANGE, "server");
+            response.payload = {
+                {"action", "key_published"},
+                {"success", true}
+            };
+            conn->send(response);
+            LOG_INFO("User '{}' published E2EE public key", conn->username());
+        } else {
+            send_error(conn, "Failed to store public key", "KEY_STORE_ERROR");
+        }
+    } else if (action == "request_key") {
+        if (!payload.contains("username")) {
+            send_error(conn, "Missing target username", "INVALID_KEY_EXCHANGE");
+            return;
+        }
+
+        std::string target_username = payload["username"];
+        auto public_key = storage_.get_public_key_by_username(target_username);
+
+        auto response = protocol::Message::create(protocol::MessageType::KEY_EXCHANGE, "server");
+        if (public_key.has_value()) {
+            response.payload = {
+                {"action", "key_response"},
+                {"username", target_username},
+                {"public_key", public_key.value()},
+                {"found", true}
+            };
+        } else {
+            response.payload = {
+                {"action", "key_response"},
+                {"username", target_username},
+                {"found", false}
+            };
+        }
+        conn->send(response);
+    } else {
+        send_error(conn, "Unknown key exchange action: " + action, "INVALID_KEY_EXCHANGE");
+    }
 }
 
 } // namespace chat::server

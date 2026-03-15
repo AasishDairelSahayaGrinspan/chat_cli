@@ -8,6 +8,10 @@ SessionManager::SessionManager()
     // Uses default rate limiter config
 }
 
+SessionManager::SessionManager(const DualRateLimiter::Config& rl_config)
+    : rate_limiter_(rl_config) {
+}
+
 Session& SessionManager::create(uint64_t conn_id, const std::string& remote_ip) {
     std::unique_lock lock(mutex_);
 
@@ -49,8 +53,30 @@ bool SessionManager::authenticate(uint64_t conn_id, uint64_t user_id, const std:
     // Check if username is already taken by another session
     auto existing = username_index_.find(username);
     if (existing != username_index_.end() && existing->second != conn_id) {
-        LOG_WARN("Username '{}' already logged in", username);
-        return false;
+        // Check if the existing session is actually still alive
+        auto existing_session = sessions_.find(existing->second);
+        if (existing_session != sessions_.end()) {
+            auto inactive_time = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::steady_clock::now() - existing_session->second.last_activity);
+
+            // If the old session has been inactive for more than 30 seconds,
+            // consider it stale and allow the new login
+            if (inactive_time.count() > 30) {
+                LOG_WARN("Removing stale session {} for username '{}' (inactive {}s)",
+                         existing->second, username, inactive_time.count());
+                // Clean up stale session
+                rate_limiter_.remove_user(username);
+                rate_limiter_.remove_ip(existing_session->second.remote_ip);
+                sessions_.erase(existing_session);
+                username_index_.erase(existing);
+            } else {
+                LOG_WARN("Username '{}' already logged in on connection {}", username, existing->second);
+                return false;
+            }
+        } else {
+            // Session doesn't exist but index entry remains — clean it up
+            username_index_.erase(existing);
+        }
     }
 
     it->second.user_id = user_id;
@@ -139,8 +165,13 @@ void SessionManager::cleanup_inactive(std::chrono::seconds timeout) {
         if (inactive_time > timeout) {
             if (!it->second.username.empty()) {
                 username_index_.erase(it->second.username);
+                rate_limiter_.remove_user(it->second.username);
             }
-            LOG_INFO("Removing inactive session {}", it->second.connection_id);
+            rate_limiter_.remove_ip(it->second.remote_ip);
+            LOG_INFO("Removing inactive session {} (user: '{}', inactive: {}s)",
+                     it->second.connection_id,
+                     it->second.username.empty() ? "anonymous" : it->second.username,
+                     inactive_time.count());
             it = sessions_.erase(it);
         } else {
             ++it;

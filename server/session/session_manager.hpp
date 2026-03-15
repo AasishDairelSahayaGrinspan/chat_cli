@@ -14,6 +14,7 @@ public:
     using SessionIterator = std::function<void(const Session&)>;
 
     SessionManager();
+    explicit SessionManager(const DualRateLimiter::Config& rl_config);
 
     // Create session for new connection
     Session& create(uint64_t conn_id, const std::string& remote_ip);

@@ -139,6 +139,17 @@ size_t ConnectionManager::count() const {
     return connections_.size();
 }
 
+size_t ConnectionManager::count_by_ip(const std::string& ip) const {
+    std::shared_lock lock(mutex_);
+    size_t count = 0;
+    for (const auto& [id, conn] : connections_) {
+        if (conn->remote_address() == ip) {
+            ++count;
+        }
+    }
+    return count;
+}
+
 size_t ConnectionManager::authenticated_count() const {
     std::shared_lock lock(mutex_);
     size_t count = 0;

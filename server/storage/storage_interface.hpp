@@ -57,6 +57,11 @@ public:
                                                          size_t limit = 50,
                                                          uint64_t before_id = 0) = 0;
 
+    // Key storage for E2EE
+    virtual bool store_public_key(uint64_t user_id, const std::string& public_key) = 0;
+    virtual std::optional<std::string> get_public_key(uint64_t user_id) = 0;
+    virtual std::optional<std::string> get_public_key_by_username(const std::string& username) = 0;
+
     // Health check
     virtual bool is_healthy() = 0;
 

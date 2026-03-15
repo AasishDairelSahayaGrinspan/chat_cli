@@ -34,6 +34,13 @@ struct ServerConfig {
     size_t rate_limit_messages_per_second = 10;
     size_t rate_limit_burst = 20;
 
+    // Connection limits
+    size_t max_connections = 1000;
+    size_t max_connections_per_ip = 5;
+
+    // Session management
+    size_t session_timeout_seconds = 1800;  // 30 minutes
+
     // Logging
     std::string log_level = "info";
     std::string log_file = "";
@@ -42,7 +49,7 @@ struct ServerConfig {
 struct ClientConfig {
     std::string server_host = "localhost";
     uint16_t server_port = 8443;
-    bool verify_ssl = false;  // Set true in production with valid certs
+    bool verify_ssl = true;  // Enabled by default; use --insecure to disable
 
     // Reconnection
     size_t reconnect_delay_ms = 1000;
@@ -69,6 +76,9 @@ inline void to_json(nlohmann::json& j, const ServerConfig& c) {
         {"redis_port", c.redis_port},
         {"rate_limit_messages_per_second", c.rate_limit_messages_per_second},
         {"rate_limit_burst", c.rate_limit_burst},
+        {"max_connections", c.max_connections},
+        {"max_connections_per_ip", c.max_connections_per_ip},
+        {"session_timeout_seconds", c.session_timeout_seconds},
         {"log_level", c.log_level},
         {"log_file", c.log_file}
     };
@@ -91,6 +101,10 @@ inline void from_json(const nlohmann::json& j, ServerConfig& c) {
     if (j.contains("rate_limit_messages_per_second"))
         j.at("rate_limit_messages_per_second").get_to(c.rate_limit_messages_per_second);
     if (j.contains("rate_limit_burst")) j.at("rate_limit_burst").get_to(c.rate_limit_burst);
+    if (j.contains("max_connections")) j.at("max_connections").get_to(c.max_connections);
+    if (j.contains("max_connections_per_ip")) j.at("max_connections_per_ip").get_to(c.max_connections_per_ip);
+    if (j.contains("session_timeout_seconds"))
+        j.at("session_timeout_seconds").get_to(c.session_timeout_seconds);
     if (j.contains("log_level")) j.at("log_level").get_to(c.log_level);
     if (j.contains("log_file")) j.at("log_file").get_to(c.log_file);
 }

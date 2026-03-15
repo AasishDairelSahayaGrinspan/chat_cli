@@ -10,6 +10,9 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include <chrono>
+#include <unordered_map>
+#include <mutex>
 
 namespace chat::server {
 
@@ -39,6 +42,9 @@ private:
     void handle_quit(Connection::Ptr conn);
     void handle_rooms(Connection::Ptr conn);
     void handle_help(Connection::Ptr conn);
+
+    // Handle key exchange for E2EE
+    void handle_key_exchange(Connection::Ptr conn, const nlohmann::json& payload);
 
     // Handle chat message
     void handle_chat_message(Connection::Ptr conn, const protocol::Message& msg);
@@ -71,6 +77,18 @@ private:
     AuthService& auth_service_;
     RoomManager& room_manager_;
     storage::IStorage& storage_;
+
+    // Brute-force protection
+    struct LoginAttempt {
+        size_t failed_count = 0;
+        std::chrono::steady_clock::time_point last_attempt{};
+        std::chrono::steady_clock::time_point lockout_until{};
+    };
+    std::mutex login_mutex_;
+    std::unordered_map<std::string, LoginAttempt> login_attempts_;
+
+    static constexpr size_t MAX_LOGIN_ATTEMPTS = 5;
+    static constexpr size_t LOGIN_LOCKOUT_SECONDS = 900; // 15 minutes
 };
 
 } // namespace chat::server

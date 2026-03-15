@@ -67,6 +67,13 @@ ftxui::Element UiRenderer::render_dm(const DisplayItem& item, const Theme& theme
     parts.push_back(
         ftxui::text("[" + item.timestamp + "] ") | ftxui::color(theme.dim_text)
     );
+
+    if (item.encrypted) {
+        parts.push_back(
+            ftxui::text("\xF0\x9F\x94\x92 ") | ftxui::color(theme.success)
+        );
+    }
+
     parts.push_back(
         ftxui::text(item.content) | ftxui::color(theme.dm_color)
     );

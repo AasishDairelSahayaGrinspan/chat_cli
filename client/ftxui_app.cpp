@@ -8,14 +8,18 @@
 #include <algorithm>
 #include <thread>
 #include <chrono>
+#include <cstdlib>
 
 namespace chat::client {
 
-FtxuiApp::FtxuiApp(const std::string& host, uint16_t port)
+FtxuiApp::FtxuiApp(const std::string& host, uint16_t port, bool verify_ssl, const std::string& ca_cert_path)
     : host_(host)
     , port_(port)
-    , client_(host, port, false)
-    , input_handler_(client_) {
+    , verify_ssl_(verify_ssl)
+    , ca_cert_path_(ca_cert_path)
+    , client_(host, port, verify_ssl, ca_cert_path)
+    , key_manager_()
+    , input_handler_(client_, key_manager_) {
 }
 
 FtxuiApp::~FtxuiApp() {
@@ -24,6 +28,15 @@ FtxuiApp::~FtxuiApp() {
 }
 
 int FtxuiApp::run() {
+    // Initialize E2EE key manager
+    std::string home_dir;
+    if (const char* home = std::getenv("HOME")) {
+        home_dir = home;
+    } else {
+        home_dir = ".";
+    }
+    key_manager_.load_or_create(home_dir + "/.chat_cli/keys");
+
     // Setup quit handler
     input_handler_.set_quit_callback([this]() {
         running_ = false;
@@ -385,6 +398,57 @@ void FtxuiApp::on_network_message(const protocol::Message& msg) {
             input_handler_.set_authenticated(true);
             if (msg.payload.contains("username")) {
                 input_handler_.set_username(msg.payload["username"]);
+            }
+
+            // Publish our E2EE public key to server on successful login
+            if (key_manager_.is_initialized()) {
+                auto key_msg = protocol::Message::create(protocol::MessageType::KEY_EXCHANGE,
+                    msg.payload.value("username", ""));
+                key_msg.payload = {
+                    {"action", "publish_key"},
+                    {"public_key", key_manager_.get_public_key()}
+                };
+                client_.send(key_msg);
+            }
+        }
+    } else if (msg.type == protocol::MessageType::KEY_EXCHANGE) {
+        std::string action = msg.payload.value("action", "");
+        if (action == "key_response" && msg.payload.value("found", false)) {
+            std::string username = msg.payload.value("username", "");
+            std::string public_key = msg.payload.value("public_key", "");
+            if (!username.empty() && !public_key.empty()) {
+                key_manager_.cache_key(username, public_key);
+            }
+        }
+        // Don't push KEY_EXCHANGE messages to display
+        screen_.PostEvent(ftxui::Event::Custom);
+        return;
+    } else if (msg.type == protocol::MessageType::DIRECT_MESSAGE) {
+        // Decrypt incoming encrypted DMs before they reach the message store
+        if (msg.payload.value("encrypted", false) && key_manager_.is_initialized()) {
+            std::string ciphertext = msg.payload.value("message", "");
+            std::string nonce = msg.payload.value("nonce", "");
+            std::string sender_pk = msg.payload.value("sender_public_key", "");
+            bool is_sent = msg.payload.value("sent", false);
+
+            if (!ciphertext.empty() && !nonce.empty() && !sender_pk.empty() && !is_sent) {
+                auto plaintext = key_manager_.decrypt(ciphertext, nonce, sender_pk);
+                if (plaintext.has_value()) {
+                    // Create a modified copy with decrypted content
+                    protocol::Message decrypted_msg = msg;
+                    decrypted_msg.payload["message"] = plaintext.value();
+                    decrypted_msg.payload["e2ee"] = true;
+                    message_store_.push(decrypted_msg);
+
+                    // Cache the sender's public key
+                    std::string from_user = msg.payload.value("from", msg.from);
+                    if (!from_user.empty()) {
+                        key_manager_.cache_key(from_user, sender_pk);
+                    }
+
+                    screen_.PostEvent(ftxui::Event::Custom);
+                    return;
+                }
             }
         }
     } else if (msg.type == protocol::MessageType::ROOM_EVENT) {

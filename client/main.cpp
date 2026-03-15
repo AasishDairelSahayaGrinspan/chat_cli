@@ -6,26 +6,40 @@
 #include <cstdint>
 
 int main(int argc, char* argv[]) {
-    // Parse arguments
     std::string host = "localhost";
     uint16_t port = 8443;
+    bool verify_ssl = true;
+    std::string ca_cert_path;
 
-    if (argc > 1) {
-        host = argv[1];
-    }
-    if (argc > 2) {
-        try {
-            port = static_cast<uint16_t>(std::stoi(argv[2]));
-        } catch (...) {
-            std::cerr << "Invalid port: " << argv[2] << std::endl;
-            return 1;
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--insecure") {
+            verify_ssl = false;
+            std::cerr << "WARNING: TLS certificate verification disabled. "
+                      << "Do not use in production." << std::endl;
+        } else if (arg == "--ca-cert" && i + 1 < argc) {
+            ca_cert_path = argv[++i];
+        } else if (arg == "--help" || arg == "-h") {
+            std::cout << "Usage: chat_client [host] [port] [options]\n"
+                      << "Options:\n"
+                      << "  --insecure     Disable TLS certificate verification\n"
+                      << "  --ca-cert PATH Load custom CA certificate\n"
+                      << "  --help, -h     Show this help\n";
+            return 0;
+        } else if (host == "localhost" && arg[0] != '-') {
+            host = arg;
+        } else if (arg[0] != '-') {
+            try {
+                port = static_cast<uint16_t>(std::stoi(arg));
+            } catch (...) {
+                std::cerr << "Invalid port: " << arg << std::endl;
+                return 1;
+            }
         }
     }
 
-    // Initialize logging (file-only for client, since FTXUI owns the terminal)
     chat::logging::Logger::init("chat_client", "", spdlog::level::warn);
 
-    // Run the FTXUI-based application
-    chat::client::FtxuiApp app(host, port);
+    chat::client::FtxuiApp app(host, port, verify_ssl, ca_cert_path);
     return app.run();
 }

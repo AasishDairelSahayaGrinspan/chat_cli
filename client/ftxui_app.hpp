@@ -3,6 +3,7 @@
 #include "tls_client.hpp"
 #include "input_handler.hpp"
 #include "message_store.hpp"
+#include "crypto.hpp"
 #include "theme.hpp"
 #include "banner.hpp"
 #include "ui_renderer.hpp"
@@ -20,7 +21,7 @@ namespace chat::client {
 
 class FtxuiApp {
 public:
-    FtxuiApp(const std::string& host, uint16_t port);
+    FtxuiApp(const std::string& host, uint16_t port, bool verify_ssl = true, const std::string& ca_cert_path = "");
     ~FtxuiApp();
 
     // Blocking — runs the FTXUI event loop on the calling thread.
@@ -50,6 +51,8 @@ private:
 
     std::string host_;
     uint16_t port_;
+    bool verify_ssl_;
+    std::string ca_cert_path_;
     std::string input_content_;
     std::vector<std::string> completion_hints_;
     bool show_banner_ = true;
@@ -58,6 +61,7 @@ private:
 
     // Owned objects
     TlsClient client_;
+    KeyManager key_manager_;
     InputHandler input_handler_;
     MessageStore message_store_;
     Theme theme_ = Theme::copilot();

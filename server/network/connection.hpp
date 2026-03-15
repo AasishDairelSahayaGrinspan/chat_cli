@@ -4,6 +4,7 @@
 #include "protocol/framing.hpp"
 #include <asio.hpp>
 #include <asio/ssl.hpp>
+#include <asio/steady_timer.hpp>
 #include <memory>
 #include <functional>
 #include <deque>
@@ -68,11 +69,17 @@ private:
     void do_read_body(uint32_t length);
     void do_write();
 
+    void start_handshake_timeout();
+    void start_idle_timeout();
+    void reset_idle_timeout();
+
     static std::atomic<uint64_t> next_id_;
 
     uint64_t id_;
     ssl_socket socket_;
     ConnectionManager& manager_;
+    asio::steady_timer handshake_timer_;
+    asio::steady_timer idle_timer_;
 
     std::array<uint8_t, protocol::Framing::HEADER_SIZE> header_buffer_;
     std::vector<uint8_t> body_buffer_;

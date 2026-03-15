@@ -10,6 +10,7 @@
 #include "logging/logger.hpp"
 
 #include <asio/signal_set.hpp>
+#include <asio/steady_timer.hpp>
 #include <iostream>
 #include <memory>
 #include <csignal>
@@ -45,7 +46,10 @@ int main(int argc, char* argv[]) {
         TlsServer server(cfg);
 
         // Create managers
-        SessionManager session_manager;
+        DualRateLimiter::Config rl_config;
+        rl_config.ip_config = {cfg.rate_limit_messages_per_second / 2, cfg.rate_limit_burst / 2};
+        rl_config.user_config = {cfg.rate_limit_messages_per_second, cfg.rate_limit_burst};
+        SessionManager session_manager(rl_config);
         AuthService auth_service(*storage);
         RoomManager room_manager(server.connection_manager(), *storage);
         CommandHandler command_handler(
@@ -116,6 +120,45 @@ int main(int argc, char* argv[]) {
             std::error_code ec;
             server.io_context().stop();
         });
+
+        // Periodic session cleanup timer
+        std::function<void(const std::error_code&)> session_cleanup;
+        asio::steady_timer session_timer(server.io_context());
+
+        session_cleanup = [&](const std::error_code& ec) {
+            if (ec || shutdown_requested) return;
+
+            LOG_DEBUG("Running session cleanup...");
+
+            // Collect stale sessions to clean up
+            std::vector<uint64_t> stale_connections;
+            session_manager.cleanup_inactive(
+                std::chrono::seconds(cfg.session_timeout_seconds));
+
+            // Reschedule
+            session_timer.expires_after(std::chrono::seconds(60));
+            session_timer.async_wait(session_cleanup);
+        };
+
+        session_timer.expires_after(std::chrono::seconds(60));
+        session_timer.async_wait(session_cleanup);
+
+        // Periodic rate limiter bucket cleanup timer
+        std::function<void(const std::error_code&)> rate_limit_cleanup;
+        asio::steady_timer rate_limit_timer(server.io_context());
+
+        rate_limit_cleanup = [&](const std::error_code& ec) {
+            if (ec || shutdown_requested) return;
+
+            LOG_DEBUG("Running rate limiter cleanup...");
+            session_manager.rate_limiter().cleanup();
+
+            rate_limit_timer.expires_after(std::chrono::minutes(5));
+            rate_limit_timer.async_wait(rate_limit_cleanup);
+        };
+
+        rate_limit_timer.expires_after(std::chrono::minutes(5));
+        rate_limit_timer.async_wait(rate_limit_cleanup);
 
         // Start services
         health.start();

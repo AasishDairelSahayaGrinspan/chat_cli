@@ -1,6 +1,7 @@
 #pragma once
 
 #include "tls_client.hpp"
+#include "crypto.hpp"
 #include <functional>
 #include <string>
 #include <sstream>
@@ -16,7 +17,7 @@ public:
     using QuitCallback = std::function<void()>;
     using ErrorCallback = std::function<void(const std::string&)>;
 
-    InputHandler(TlsClient& client);
+    InputHandler(TlsClient& client, KeyManager& key_manager);
 
     // Process a line of input
     void process_line(const std::string& line);
@@ -45,6 +46,7 @@ private:
     void report_error(const std::string& error);
 
     TlsClient& client_;
+    KeyManager& key_manager_;
 
     std::string current_room_;
     std::string username_;

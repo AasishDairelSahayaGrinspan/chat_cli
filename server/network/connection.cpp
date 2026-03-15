@@ -11,7 +11,9 @@ Connection::Connection(asio::io_context& io_context,
                       ConnectionManager& manager)
     : id_(next_id_++),
       socket_(io_context, ssl_context),
-      manager_(manager) {
+      manager_(manager),
+      handshake_timer_(io_context),
+      idle_timer_(io_context) {
 }
 
 Connection::~Connection() {
@@ -33,16 +35,20 @@ void Connection::start() {
 
 void Connection::do_handshake() {
     auto self = shared_from_this();
+    start_handshake_timeout();
     socket_.async_handshake(
         asio::ssl::stream_base::server,
         [this, self](const std::error_code& ec) {
             if (ec) {
+                handshake_timer_.cancel();
                 LOG_WARN("TLS handshake failed for connection {}: {}", id_, ec.message());
                 if (error_handler_) {
                     error_handler_(self, ec);
                 }
                 return;
             }
+            handshake_timer_.cancel();
+            start_idle_timeout();
             LOG_DEBUG("TLS handshake complete for connection {}", id_);
             do_read_header();
         });
@@ -75,6 +81,7 @@ void Connection::do_read_header() {
                 return;
             }
 
+            reset_idle_timeout();
             do_read_body(length);
         });
 }
@@ -163,12 +170,41 @@ void Connection::do_write() {
         });
 }
 
+void Connection::start_handshake_timeout() {
+    auto self = shared_from_this();
+    handshake_timer_.expires_after(std::chrono::seconds(10));
+    handshake_timer_.async_wait([this, self](const std::error_code& ec) {
+        if (!ec && !closed_) {
+            LOG_WARN("Connection {} handshake timeout", id_);
+            close();
+        }
+    });
+}
+
+void Connection::start_idle_timeout() {
+    reset_idle_timeout();
+}
+
+void Connection::reset_idle_timeout() {
+    auto self = shared_from_this();
+    idle_timer_.expires_after(std::chrono::seconds(60));
+    idle_timer_.async_wait([this, self](const std::error_code& ec) {
+        if (!ec && !closed_) {
+            LOG_INFO("Connection {} idle timeout", id_);
+            close();
+        }
+    });
+}
+
 void Connection::close() {
     if (closed_.exchange(true)) {
         return;  // Already closed
     }
 
     LOG_DEBUG("Closing connection {}", id_);
+
+    handshake_timer_.cancel();
+    idle_timer_.cancel();
 
     std::error_code ec;
     socket_.lowest_layer().shutdown(tcp::socket::shutdown_both, ec);

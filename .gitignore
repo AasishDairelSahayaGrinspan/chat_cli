@@ -31,3 +31,10 @@ test_client.sh
 # Certificates (don't commit real certs in production)
 # certs/ are self-signed dev certs, kept for convenience
 
+# Private keys and certificates (generate locally)
+certs/*.key
+certs/*.pem
+docker/certs/*.key
+docker/certs/*.pem
+docker/.env
+
