@@ -64,7 +64,7 @@ private:
     KeyManager key_manager_;
     InputHandler input_handler_;
     MessageStore message_store_;
-    Theme theme_ = Theme::copilot();
+    Theme theme_ = Theme::modern();
 
     ftxui::ScreenInteractive screen_ = ftxui::ScreenInteractive::Fullscreen();
     std::atomic<bool> running_{true};

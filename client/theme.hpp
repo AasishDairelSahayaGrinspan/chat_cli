@@ -26,6 +26,7 @@ struct Theme {
     static Theme dark();
     static Theme light();
     static Theme copilot();
+    static Theme modern();
 };
 
 } // namespace chat::client

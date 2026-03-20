@@ -62,4 +62,25 @@ Theme Theme::copilot() {
     return t;
 }
 
+Theme Theme::modern() {
+    Theme t;
+    // Modern professional chat theme inspired by Discord/Slack
+    t.accent       = ftxui::Color::RGB(88, 101, 242);    // Vibrant indigo
+    t.username     = ftxui::Color::RGB(167, 243, 208);   // Mint green
+    t.room_name    = ftxui::Color::RGB(147, 197, 253);   // Light blue
+    t.prompt       = ftxui::Color::RGB(229, 229, 229);   // Off-white
+    t.success      = ftxui::Color::RGB(134, 239, 172);   // Fresh green
+    t.error        = ftxui::Color::RGB(252, 165, 165);   // Soft red
+    t.warning      = ftxui::Color::RGB(253, 224, 71);    // Bright yellow
+    t.system_msg   = ftxui::Color::RGB(165, 180, 252);   // Soft indigo
+    t.dm_color     = ftxui::Color::RGB(219, 112, 147);   // Mauve pink
+    t.presence     = ftxui::Color::RGB(134, 239, 172);   // Green (online)
+    t.dim_text     = ftxui::Color::RGB(155, 160, 203);   // Muted purple
+    t.status_bar_bg = ftxui::Color::RGB(30, 27, 75);     // Dark indigo bg
+    t.status_bar_fg = ftxui::Color::RGB(229, 229, 229);  // Off-white text
+    t.border_color = ftxui::Color::RGB(88, 101, 242);    // Indigo borders
+    t.banner       = ftxui::Color::RGB(88, 101, 242);    // Indigo banner
+    return t;
+}
+
 } // namespace chat::client
