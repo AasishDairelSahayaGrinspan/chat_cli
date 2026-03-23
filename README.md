@@ -2,6 +2,25 @@
 
 A secure, scalable TCP-based chat application written in C++17 using standalone Asio for async networking and OpenSSL for TLS encryption.
 
+## What Is Implemented Today
+
+- **Secure transport**: TLS 1.2+ client/server connections with optional custom CA and dev-only insecure mode
+- **Authentication and identity**: Register/login, username validation, rename, duplicate-login prevention
+- **Room-based chat**: Join/leave rooms, list rooms/users, broadcast within room
+- **Direct messaging**: Private DMs with optional end-to-end encrypted payload support
+- **Modern terminal UI**: FTXUI interface with animated banner, message feed, status bar, and command completion
+- **Client resilience**: Automatic reconnect attempts on disconnect
+- **Server safety controls**: Per-IP/per-user token-bucket rate limiting, input sanitization, login lockout window
+- **Persistence (SQLite)**: Users, rooms, messages, and E2EE public keys stored in SQLite
+- **Operational readiness**: HTTP liveness/readiness endpoints for orchestration and load balancers
+
+## Current Limitations
+
+- **PostgreSQL storage**: Interface exists but production implementation is not completed yet
+- **Redis scaling path**: Broker abstraction exists; full Redis pub/sub wiring is not completed yet
+- **Message history UX**: Messages are persisted server-side, but no client `/history` command yet
+- **E2EE model**: Opportunistic encryption for DMs when recipient public key is available; room messages are not E2EE
+
 ## Architecture
 
 ```
@@ -118,6 +137,7 @@ chmod +x build.sh
 | `BUILD_SERVER` | ON | Build the server |
 | `BUILD_CLIENT` | ON | Build the client |
 | `ENABLE_REDIS` | OFF | Enable Redis Pub/Sub support |
+| `ENABLE_POSTGRES` | OFF | Enable PostgreSQL storage backend scaffolding |
 
 ## Running
 
@@ -183,6 +203,10 @@ docker-compose --profile production up -d
 | `/quit` | Disconnect from server |
 | `/help` | Show help message |
 
+Command aliases are also supported in the client (for example `/j`, `/who`, `/nick`, `/exit`).
+
+For DMs, the client will automatically attempt end-to-end encryption when it has the recipient's cached public key.
+
 ### Example Session
 
 ```
@@ -222,6 +246,7 @@ Goodbye!
     "dh_file": "certs/dh2048.pem",
     "storage_type": "sqlite",
     "sqlite_path": "chat.db",
+    "postgres_conn": "postgresql://chat:password@localhost:5432/chat",
     "redis_enabled": false,
     "redis_host": "localhost",
     "redis_port": 6379,
@@ -237,6 +262,7 @@ Goodbye!
 - **TLS 1.2+**: All connections encrypted with modern cipher suites
 - **Argon2id**: Password hashing using libsodium's implementation
 - **Rate Limiting**: Token bucket algorithm per-IP and per-user
+- **Login lockout**: Temporary account lockout after repeated failed login attempts
 - **Message Validation**: Size limits and content validation
 - **No Global State**: Thread-safe design with proper synchronization
 
@@ -259,16 +285,35 @@ Goodbye!
 - **Liveness**: `GET /healthz` - Returns 200 if server is running
 - **Readiness**: `GET /readyz` - Returns 200 if storage is accessible
 
-## Next Steps for Production
+## Proposed Roadmap
 
-1. **Implement PostgreSQL storage** for production data persistence
-2. **Complete Redis Pub/Sub** integration for horizontal scaling
-3. **Add metrics endpoint** (Prometheus format)
-4. **Implement message history** loading on room join
-5. **Add file upload support** with S3/MinIO backend
-6. **Implement user roles** and permissions
-7. **Add audit logging** for compliance
-8. **Set up TLS certificate rotation**
+### Phase 1: Production Core
+
+1. **Complete PostgreSQL backend** with migrations, pooling, and parity tests vs SQLite
+2. **Finish Redis pub/sub integration** for multi-instance fanout and cross-node presence/DM delivery
+3. **Add Prometheus `/metrics` endpoint** for latency, active sessions, auth failures, and message throughput
+4. **Add structured audit logging** for auth events, renames, moderation actions, and admin operations
+
+### Phase 2: Chat Experience
+
+1. **Implement `/history` command** with pagination and room join backfill
+2. **Add delivery/read receipts for DMs** with protocol fields and UI markers
+3. **Add typing indicators and richer presence states** (away, idle, reconnecting)
+4. **Add client profile/config file** for default server, CA path, theme, and reconnect policy
+
+### Phase 3: Security and Governance
+
+1. **Add room roles and moderation commands** (`/mute`, `/kick`, `/ban`, room owner/admin)
+2. **Implement session/token management improvements** (remember-me token rotation and revoke)
+3. **Add key verification UX for E2EE** (fingerprint trust prompts and key change warnings)
+4. **Automate TLS certificate rotation** and hot reload
+
+### Phase 4: Platform Extensions
+
+1. **Add optional file attachments** backed by S3/MinIO with signed URL download flow
+2. **Add webhook/event bridge** for bot integrations and notifications
+3. **Add admin CLI/API** for room and user lifecycle operations
+4. **Add load/perf test suite** and capacity baselines per deployment profile
 
 ## License
 

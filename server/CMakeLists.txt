@@ -9,6 +9,7 @@ add_executable(chat_server
     commands/command_handler.cpp
     commands/room_manager.cpp
     storage/sqlite_storage.cpp
+    storage/postgres_storage.cpp
     health/health_endpoint.cpp
 )
 
@@ -31,5 +32,9 @@ if(SQLITE3_TARGET_INCLUDES)
 endif()
 if(SODIUM_TARGET_INCLUDES)
     target_include_directories(chat_server PRIVATE ${SODIUM_TARGET_INCLUDES})
+endif()
+
+if(ENABLE_POSTGRES)
+    target_compile_definitions(chat_server PRIVATE ENABLE_POSTGRES)
 endif()
 

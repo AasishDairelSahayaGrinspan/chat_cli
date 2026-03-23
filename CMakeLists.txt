@@ -10,6 +10,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(BUILD_SERVER "Build the chat server" ON)
 option(BUILD_CLIENT "Build the chat client" ON)
 option(ENABLE_REDIS "Enable Redis Pub/Sub support" OFF)
+option(ENABLE_POSTGRES "Enable PostgreSQL storage backend" OFF)
 
 # Compiler flags - platform-aware
 if(MSVC)

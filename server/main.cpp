@@ -5,6 +5,7 @@
 #include "commands/command_handler.hpp"
 #include "commands/room_manager.hpp"
 #include "storage/sqlite_storage.hpp"
+#include "storage/postgres_storage.hpp"
 #include "health/health_endpoint.hpp"
 #include "config/config.hpp"
 #include "logging/logger.hpp"
@@ -20,6 +21,24 @@ using namespace chat::server;
 
 namespace {
     std::atomic<bool> shutdown_requested{false};
+
+    storage::StoragePtr create_storage_from_config(const config::ServerConfig& cfg) {
+        if (cfg.storage_type == "sqlite") {
+            LOG_INFO("Using SQLite storage: {}", cfg.sqlite_path);
+            return std::make_unique<storage::SqliteStorage>(cfg.sqlite_path);
+        }
+
+        if (cfg.storage_type == "postgres") {
+            if (cfg.postgres_conn.empty()) {
+                throw std::runtime_error(
+                    "storage_type=postgres requires non-empty 'postgres_conn' in config");
+            }
+            LOG_INFO("Using PostgreSQL storage backend");
+            return std::make_unique<storage::PostgresStorage>(cfg.postgres_conn);
+        }
+
+        throw std::runtime_error("Unsupported storage_type: " + cfg.storage_type);
+    }
 }
 
 int main(int argc, char* argv[]) {
@@ -39,7 +58,7 @@ int main(int argc, char* argv[]) {
                  cfg.bind_address, cfg.port, cfg.thread_pool_size);
 
         // Initialize storage
-        auto storage = std::make_unique<storage::SqliteStorage>(cfg.sqlite_path);
+        auto storage = create_storage_from_config(cfg);
         storage->init_schema();
 
         // Create server
