@@ -35,6 +35,9 @@ if(SODIUM_TARGET_INCLUDES)
 endif()
 
 if(ENABLE_POSTGRES)
+    find_package(PostgreSQL REQUIRED)
+    target_include_directories(chat_server PRIVATE ${PostgreSQL_INCLUDE_DIRS})
+    target_link_libraries(chat_server PRIVATE ${PostgreSQL_LIBRARIES})
     target_compile_definitions(chat_server PRIVATE ENABLE_POSTGRES)
 endif()
 

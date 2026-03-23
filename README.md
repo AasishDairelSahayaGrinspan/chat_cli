@@ -110,6 +110,7 @@ All messages use a length-prefixed binary frame:
 - OpenSSL 1.1+
 - SQLite3
 - libsodium
+- PostgreSQL client library (`libpq`) when building with `ENABLE_POSTGRES=ON`
 
 ### Ubuntu/Debian
 
@@ -120,6 +121,7 @@ sudo apt-get install -y \
     build-essential cmake git \
     libssl-dev \
     libsqlite3-dev \
+    libpq-dev \
     libsodium-dev \
     pkg-config
 
@@ -138,6 +140,13 @@ chmod +x build.sh
 | `BUILD_CLIENT` | ON | Build the client |
 | `ENABLE_REDIS` | OFF | Enable Redis Pub/Sub support |
 | `ENABLE_POSTGRES` | OFF | Enable PostgreSQL storage backend scaffolding |
+
+To build with PostgreSQL backend enabled:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_POSTGRES=ON
+cmake --build build -j
+```
 
 ## Running
 
