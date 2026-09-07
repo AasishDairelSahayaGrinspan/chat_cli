@@ -1,4 +1,4 @@
-# Production-Ready CLI Chat Application
+# CLI Chat Application
 
 A secure, scalable TCP-based chat application written in C++17 using standalone Asio for async networking and OpenSSL for TLS encryption.
 
