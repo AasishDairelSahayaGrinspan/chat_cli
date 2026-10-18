@@ -190,6 +190,37 @@ DisplayItem MessageStore::convert(const protocol::Message& msg) const {
             break;
         }
 
+        case protocol::MessageType::ENCRYPTED_MESSAGE: {
+            item.kind = DisplayItem::Kind::CHAT;
+            item.encrypted = msg.payload.value("e2ee", false) &&
+                             !msg.payload.value("e2ee_failed", false);
+            item.content = msg.payload.value("message",
+                                             std::string("[unable to decrypt]"));
+            break;
+        }
+
+        case protocol::MessageType::ROOM_MEMBERSHIP: {
+            item.kind = DisplayItem::Kind::SYSTEM;
+            std::string room = msg.payload.value("room", msg.room);
+            uint64_t epoch = msg.payload.value("epoch", uint64_t(0));
+            std::string action = msg.payload.value("action", "");
+            std::string user = msg.payload.value("user", "");
+            item.room = room;
+            item.content = "Room #" + room + " keys rotated (epoch " +
+                           std::to_string(epoch) + ")";
+            if (!user.empty() && (action == "join" || action == "leave")) {
+                item.content += " - " + user +
+                                (action == "join" ? " joined" : " left");
+            }
+            break;
+        }
+
+        case protocol::MessageType::ROOM_KEY: {
+            item.kind = DisplayItem::Kind::SYSTEM;
+            item.content = "Updated encryption keys for #" + msg.room;
+            break;
+        }
+
         default:
             item.kind = DisplayItem::Kind::SYSTEM;
             item.content = "[DEBUG] " + nlohmann::json(msg).dump();

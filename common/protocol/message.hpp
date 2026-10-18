@@ -21,6 +21,9 @@ enum class MessageType {
     ROOM_EVENT,
     DIRECT_MESSAGE,
     KEY_EXCHANGE,
+    ROOM_KEY,            // pairwise-wrapped room sender key (v2)
+    ROOM_MEMBERSHIP,     // room epoch / membership change (v2)
+    ENCRYPTED_MESSAGE,   // end-to-end encrypted room message (v2)
     HEALTH
 };
 
@@ -35,6 +38,9 @@ NLOHMANN_JSON_SERIALIZE_ENUM(MessageType, {
     {MessageType::ROOM_EVENT, "room_event"},
     {MessageType::DIRECT_MESSAGE, "direct_message"},
     {MessageType::KEY_EXCHANGE, "key_exchange"},
+    {MessageType::ROOM_KEY, "room_key"},
+    {MessageType::ROOM_MEMBERSHIP, "room_membership"},
+    {MessageType::ENCRYPTED_MESSAGE, "encrypted_message"},
     {MessageType::HEALTH, "health"}
 })
 
@@ -125,6 +131,19 @@ constexpr size_t MIN_USERNAME_LENGTH = 3;
 constexpr size_t MAX_ROOM_NAME_LENGTH = 64;
 constexpr size_t MAX_PASSWORD_LENGTH = 128;
 constexpr size_t MIN_PASSWORD_LENGTH = 8;
+
+// Protocol version 2 adds end-to-end encrypted room messages.
+// Clients that predate v2 cannot read room traffic on servers where
+// room E2EE is required (the default).
+constexpr int PROTOCOL_VERSION = 2;
+
+// Room E2EE (v2) payload size limits. These are generous upper bounds on
+// base64-encoded fields, enforced by the server before relaying.
+constexpr size_t MAX_ROOM_KEY_B64_LENGTH = 2048;       // wrapped sender key box
+constexpr size_t MAX_ROOM_NONCE_B64_LENGTH = 64;       // 24-byte nonce
+constexpr size_t MAX_ROOM_SIGNATURE_B64_LENGTH = 128;  // 64-byte Ed25519 sig
+constexpr size_t MAX_ROOM_PUBKEY_B64_LENGTH = 64;      // 32-byte public key
+constexpr size_t MAX_ROOM_CIPHERTEXT_B64_LENGTH = 60000;
 
 } // namespace chat::protocol
 

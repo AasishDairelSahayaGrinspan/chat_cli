@@ -22,7 +22,8 @@ public:
                   SessionManager& session_manager,
                   AuthService& auth_service,
                   RoomManager& room_manager,
-                  storage::IStorage& storage);
+                  storage::IStorage& storage,
+                  bool room_e2ee_required = true);
 
     // Handle incoming message
     void handle(Connection::Ptr conn, const protocol::Message& msg);
@@ -48,6 +49,12 @@ private:
 
     // Handle chat message
     void handle_chat_message(Connection::Ptr conn, const protocol::Message& msg);
+
+    // Room E2EE (protocol v2)
+    void handle_room_key(Connection::Ptr conn, const protocol::Message& msg);
+    void handle_encrypted_message(Connection::Ptr conn, const protocol::Message& msg);
+    void deliver_room_key_envelopes(Connection::Ptr conn);
+    bool is_room_member(Connection::Ptr conn, const std::string& room);
 
     // Parse command from text
     struct ParsedCommand {
@@ -77,6 +84,7 @@ private:
     AuthService& auth_service_;
     RoomManager& room_manager_;
     storage::IStorage& storage_;
+    bool room_e2ee_required_ = true;
 
     // Brute-force protection
     struct LoginAttempt {

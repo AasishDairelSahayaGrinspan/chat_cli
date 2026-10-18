@@ -24,6 +24,9 @@ public:
     std::optional<Room> get_room(const std::string& name) override;
     std::vector<Room> list_rooms() override;
 
+    uint64_t room_epoch(const std::string& room) override;
+    uint64_t bump_room_epoch(const std::string& room) override;
+
     bool store_message(const StoredMessage& msg) override;
     std::vector<StoredMessage> get_room_messages(const std::string& room,
                                                  size_t limit = 50,
@@ -32,6 +35,13 @@ public:
     bool store_public_key(uint64_t user_id, const std::string& public_key) override;
     std::optional<std::string> get_public_key(uint64_t user_id) override;
     std::optional<std::string> get_public_key_by_username(const std::string& username) override;
+
+    bool store_room_key_envelope(uint64_t recipient_user_id,
+                                 const std::string& sender,
+                                 const std::string& room,
+                                 uint64_t epoch,
+                                 const std::string& payload_json) override;
+    std::vector<RoomKeyEnvelope> take_room_key_envelopes(uint64_t recipient_user_id) override;
 
     bool is_healthy() override;
     void init_schema() override;

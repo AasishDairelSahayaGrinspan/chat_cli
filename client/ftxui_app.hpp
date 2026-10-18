@@ -4,6 +4,7 @@
 #include "input_handler.hpp"
 #include "message_store.hpp"
 #include "crypto.hpp"
+#include "group_manager.hpp"
 #include "theme.hpp"
 #include "banner.hpp"
 #include "ui_renderer.hpp"
@@ -45,6 +46,17 @@ private:
     void on_network_message(const protocol::Message& msg);
     void on_disconnect(const std::string& reason);
 
+    // Room E2EE: rotate/distribute keys for a room membership state and ask
+    // the server for any member keys we are missing.
+    void sync_room_keys(const std::string& room, uint64_t epoch,
+                        const std::vector<std::string>& members);
+
+    // Ask the server for the keys of room members we still can't encrypt
+    // to. Called on membership changes and periodically (peers may publish
+    // their key just after we asked).
+    void request_missing_room_keys();
+    void send_key_request(const std::string& user);
+
     // Application state
     enum class AppState { CONNECTING, BANNER, CHAT };
     AppState state_ = AppState::CONNECTING;
@@ -62,6 +74,7 @@ private:
     // Owned objects
     TlsClient client_;
     KeyManager key_manager_;
+    GroupManager group_manager_;
     InputHandler input_handler_;
     MessageStore message_store_;
     Theme theme_ = Theme::modern();

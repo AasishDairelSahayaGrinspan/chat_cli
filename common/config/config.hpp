@@ -34,6 +34,11 @@ struct ServerConfig {
     size_t rate_limit_messages_per_second = 10;
     size_t rate_limit_burst = 20;
 
+    // Room end-to-end encryption. When true (default), the server refuses
+    // to relay plaintext room messages and only forwards ENCRYPTED_MESSAGE
+    // frames produced by protocol-v2 clients.
+    bool room_e2ee_required = true;
+
     // Connection limits
     size_t max_connections = 1000;
     size_t max_connections_per_ip = 5;
@@ -76,6 +81,7 @@ inline void to_json(nlohmann::json& j, const ServerConfig& c) {
         {"redis_port", c.redis_port},
         {"rate_limit_messages_per_second", c.rate_limit_messages_per_second},
         {"rate_limit_burst", c.rate_limit_burst},
+        {"room_e2ee_required", c.room_e2ee_required},
         {"max_connections", c.max_connections},
         {"max_connections_per_ip", c.max_connections_per_ip},
         {"session_timeout_seconds", c.session_timeout_seconds},
@@ -101,6 +107,7 @@ inline void from_json(const nlohmann::json& j, ServerConfig& c) {
     if (j.contains("rate_limit_messages_per_second"))
         j.at("rate_limit_messages_per_second").get_to(c.rate_limit_messages_per_second);
     if (j.contains("rate_limit_burst")) j.at("rate_limit_burst").get_to(c.rate_limit_burst);
+    if (j.contains("room_e2ee_required")) j.at("room_e2ee_required").get_to(c.room_e2ee_required);
     if (j.contains("max_connections")) j.at("max_connections").get_to(c.max_connections);
     if (j.contains("max_connections_per_ip")) j.at("max_connections_per_ip").get_to(c.max_connections_per_ip);
     if (j.contains("session_timeout_seconds"))

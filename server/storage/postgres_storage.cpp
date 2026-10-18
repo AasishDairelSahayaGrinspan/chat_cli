@@ -562,6 +562,162 @@ std::optional<std::string> PostgresStorage::get_public_key_by_username(const std
 #endif
 }
 
+uint64_t PostgresStorage::room_epoch(const std::string& room) {
+#ifdef ENABLE_POSTGRES
+    auto conn = connect_or_throw(connection_string_);
+    const char* params[1] = {room.c_str()};
+
+    PgResultPtr res(PQexecParams(
+        conn.get(),
+        "SELECT epoch FROM rooms WHERE name = $1",
+        1,
+        nullptr,
+        params,
+        nullptr,
+        nullptr,
+        0));
+
+    if (!tuples_ok(res.get()) || PQntuples(res.get()) == 0) {
+        if (!tuples_ok(res.get())) {
+            LOG_ERROR("PostgreSQL room_epoch failed: {}", PQresultErrorMessage(res.get()));
+        }
+        return 0;
+    }
+
+    return parse_uint64_cell(res.get(), 0, 0).value_or(0);
+#else
+    throw std::runtime_error("PostgreSQL backend is disabled at build time.");
+#endif
+}
+
+uint64_t PostgresStorage::bump_room_epoch(const std::string& room) {
+#ifdef ENABLE_POSTGRES
+    auto conn = connect_or_throw(connection_string_);
+    const char* params[1] = {room.c_str()};
+
+    PgResultPtr res(PQexecParams(
+        conn.get(),
+        "UPDATE rooms SET epoch = epoch + 1 WHERE name = $1 RETURNING epoch",
+        1,
+        nullptr,
+        params,
+        nullptr,
+        nullptr,
+        0));
+
+    if (!tuples_ok(res.get()) || PQntuples(res.get()) == 0) {
+        if (!tuples_ok(res.get())) {
+            LOG_ERROR("PostgreSQL bump_room_epoch failed: {}", PQresultErrorMessage(res.get()));
+        }
+        return 0;
+    }
+
+    return parse_uint64_cell(res.get(), 0, 0).value_or(0);
+#else
+    throw std::runtime_error("PostgreSQL backend is disabled at build time.");
+#endif
+}
+
+bool PostgresStorage::store_room_key_envelope(uint64_t recipient_user_id,
+                                              const std::string& sender,
+                                              const std::string& room,
+                                              uint64_t epoch,
+                                              const std::string& payload_json) {
+#ifdef ENABLE_POSTGRES
+    auto conn = connect_or_throw(connection_string_);
+    auto recipient_str = std::to_string(recipient_user_id);
+    auto epoch_str = std::to_string(epoch);
+    auto now = std::to_string(std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count());
+
+    const char* params[6] = {
+        recipient_str.c_str(),
+        sender.c_str(),
+        room.c_str(),
+        epoch_str.c_str(),
+        payload_json.c_str(),
+        now.c_str()};
+
+    PgResultPtr res(PQexecParams(
+        conn.get(),
+        "INSERT INTO room_key_envelopes (recipient_id, sender, room, epoch, payload, created_at) "
+        "VALUES ($1, $2, $3, $4, $5, $6)",
+        6,
+        nullptr,
+        params,
+        nullptr,
+        nullptr,
+        0));
+
+    if (!command_ok(res.get())) {
+        LOG_ERROR("PostgreSQL store_room_key_envelope failed: {}", PQresultErrorMessage(res.get()));
+        return false;
+    }
+
+    // Bound the queue per recipient (keep the newest 1000 envelopes).
+    const char* trim_params[1] = {recipient_str.c_str()};
+    PgResultPtr trim_res(PQexecParams(
+        conn.get(),
+        "DELETE FROM room_key_envelopes WHERE recipient_id = $1 AND id NOT IN ("
+        "  SELECT id FROM room_key_envelopes WHERE recipient_id = $1 "
+        "  ORDER BY id DESC LIMIT 1000"
+        ")",
+        1,
+        nullptr,
+        trim_params,
+        nullptr,
+        nullptr,
+        0));
+
+    if (!command_ok(trim_res.get())) {
+        LOG_WARN("PostgreSQL room key envelope trim failed: {}", PQresultErrorMessage(trim_res.get()));
+        // Not fatal: the envelope itself was stored.
+    }
+
+    return true;
+#else
+    throw std::runtime_error("PostgreSQL backend is disabled at build time.");
+#endif
+}
+
+std::vector<RoomKeyEnvelope> PostgresStorage::take_room_key_envelopes(uint64_t recipient_user_id) {
+    std::vector<RoomKeyEnvelope> envelopes;
+#ifdef ENABLE_POSTGRES
+    auto conn = connect_or_throw(connection_string_);
+    auto recipient_str = std::to_string(recipient_user_id);
+    const char* params[1] = {recipient_str.c_str()};
+
+    PgResultPtr res(PQexecParams(
+        conn.get(),
+        "DELETE FROM room_key_envelopes WHERE recipient_id = $1 "
+        "RETURNING id, sender, room, epoch, payload",
+        1,
+        nullptr,
+        params,
+        nullptr,
+        nullptr,
+        0));
+
+    if (!tuples_ok(res.get())) {
+        LOG_ERROR("PostgreSQL take_room_key_envelopes failed: {}", PQresultErrorMessage(res.get()));
+        return envelopes;
+    }
+
+    int count = PQntuples(res.get());
+    envelopes.reserve(static_cast<size_t>(count));
+    for (int i = 0; i < count; ++i) {
+        RoomKeyEnvelope env;
+        env.id = parse_uint64_cell(res.get(), i, 0).value_or(0);
+        env.sender = PQgetvalue(res.get(), i, 1);
+        env.room = PQgetvalue(res.get(), i, 2);
+        env.epoch = parse_uint64_cell(res.get(), i, 3).value_or(0);
+        env.payload = PQgetvalue(res.get(), i, 4);
+        envelopes.push_back(std::move(env));
+    }
+#endif
+    return envelopes;
+}
+
 bool PostgresStorage::is_healthy() {
 #ifdef ENABLE_POSTGRES
     try {
@@ -616,6 +772,20 @@ void PostgresStorage::init_schema() {
             created_at BIGINT NOT NULL,
             updated_at BIGINT NOT NULL
         );
+
+        ALTER TABLE rooms ADD COLUMN IF NOT EXISTS epoch BIGINT NOT NULL DEFAULT 1;
+
+        CREATE TABLE IF NOT EXISTS room_key_envelopes (
+            id BIGSERIAL PRIMARY KEY,
+            recipient_id BIGINT NOT NULL REFERENCES users(id),
+            sender TEXT NOT NULL,
+            room TEXT NOT NULL,
+            epoch BIGINT NOT NULL,
+            payload TEXT NOT NULL,
+            created_at BIGINT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_rke_recipient ON room_key_envelopes(recipient_id);
     )SQL";
 
     PgResultPtr schema_res(PQexec(conn.get(), schema_sql));

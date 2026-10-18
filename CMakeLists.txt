@@ -9,6 +9,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Build options
 option(BUILD_SERVER "Build the chat server" ON)
 option(BUILD_CLIENT "Build the chat client" ON)
+option(BUILD_TESTS "Build unit tests" OFF)
 option(ENABLE_REDIS "Enable Redis Pub/Sub support" OFF)
 option(ENABLE_POSTGRES "Enable PostgreSQL storage backend" OFF)
 
@@ -122,5 +123,10 @@ endif()
 
 if(BUILD_CLIENT)
     add_subdirectory(client)
+endif()
+
+if(BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
 endif()
 

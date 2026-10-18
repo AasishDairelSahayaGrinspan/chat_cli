@@ -76,7 +76,8 @@ int main(int argc, char* argv[]) {
             session_manager,
             auth_service,
             room_manager,
-            *storage
+            *storage,
+            cfg.room_e2ee_required
         );
 
         // Setup connection handlers
