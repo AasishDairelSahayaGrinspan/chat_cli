@@ -34,6 +34,16 @@ struct Room {
     bool is_private = false;
 };
 
+// A room sender-key envelope (opaque E2EE payload) queued for an offline
+// recipient. The server never inspects the contents.
+struct RoomKeyEnvelope {
+    uint64_t id = 0;
+    std::string sender;
+    std::string room;
+    uint64_t epoch = 0;
+    std::string payload;  // JSON payload exactly as the sender produced it
+};
+
 class IStorage {
 public:
     virtual ~IStorage() = default;
@@ -51,6 +61,11 @@ public:
     virtual std::optional<Room> get_room(const std::string& name) = 0;
     virtual std::vector<Room> list_rooms() = 0;
 
+    // Room epoch: incremented on every membership change so members can
+    // rotate sender keys (forward secrecy on join/leave).
+    virtual uint64_t room_epoch(const std::string& room) = 0;
+    virtual uint64_t bump_room_epoch(const std::string& room) = 0;  // returns new epoch, 0 on error
+
     // Message operations
     virtual bool store_message(const StoredMessage& msg) = 0;
     virtual std::vector<StoredMessage> get_room_messages(const std::string& room,
@@ -61,6 +76,14 @@ public:
     virtual bool store_public_key(uint64_t user_id, const std::string& public_key) = 0;
     virtual std::optional<std::string> get_public_key(uint64_t user_id) = 0;
     virtual std::optional<std::string> get_public_key_by_username(const std::string& username) = 0;
+
+    // Queued room key envelopes (delivered on login/join, then removed)
+    virtual bool store_room_key_envelope(uint64_t recipient_user_id,
+                                         const std::string& sender,
+                                         const std::string& room,
+                                         uint64_t epoch,
+                                         const std::string& payload_json) = 0;
+    virtual std::vector<RoomKeyEnvelope> take_room_key_envelopes(uint64_t recipient_user_id) = 0;
 
     // Health check
     virtual bool is_healthy() = 0;

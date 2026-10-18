@@ -86,6 +86,29 @@ void SqliteStorage::init_schema() {
         )
     )");
 
+    // Room epoch (protocol v2): bumped on every membership change.
+    // Existing databases predate the column, so add it defensively.
+    try {
+        exec("ALTER TABLE rooms ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1");
+    } catch (...) {
+        // Column already exists
+    }
+
+    // Queued sender-key envelopes for offline members (protocol v2).
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS room_key_envelopes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            recipient_id INTEGER NOT NULL,
+            sender TEXT NOT NULL,
+            room TEXT NOT NULL,
+            epoch INTEGER NOT NULL,
+            payload TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY (recipient_id) REFERENCES users(id)
+        )
+    )");
+    exec("CREATE INDEX IF NOT EXISTS idx_rke_recipient ON room_key_envelopes(recipient_id)");
+
     // Create default general room (inline to avoid mutex deadlock)
     {
         const char* sql = "INSERT OR IGNORE INTO rooms (name, description, created_at) VALUES ('general', 'General discussion', strftime('%s','now'))";
@@ -462,6 +485,158 @@ std::optional<std::string> SqliteStorage::get_public_key_by_username(const std::
 
     sqlite3_finalize(stmt);
     return result;
+}
+
+uint64_t SqliteStorage::room_epoch(const std::string& room) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    const char* sql = "SELECT epoch FROM rooms WHERE name = ?";
+    sqlite3_stmt* stmt = nullptr;
+
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return 0;
+    }
+
+    sqlite3_bind_text(stmt, 1, room.c_str(), -1, SQLITE_TRANSIENT);
+
+    uint64_t epoch = 0;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        epoch = static_cast<uint64_t>(sqlite3_column_int64(stmt, 0));
+    }
+
+    sqlite3_finalize(stmt);
+    return epoch;
+}
+
+uint64_t SqliteStorage::bump_room_epoch(const std::string& room) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    const char* sql = "UPDATE rooms SET epoch = epoch + 1 WHERE name = ?";
+    sqlite3_stmt* stmt = nullptr;
+
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return 0;
+    }
+
+    sqlite3_bind_text(stmt, 1, room.c_str(), -1, SQLITE_TRANSIENT);
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    if (rc != SQLITE_DONE) {
+        LOG_WARN("Failed to bump epoch for room '{}': {}", room, sqlite3_errmsg(db_));
+        return 0;
+    }
+
+    // Read back the new value (still holding the lock).
+    const char* select_sql = "SELECT epoch FROM rooms WHERE name = ?";
+    stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, select_sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return 0;
+    }
+
+    sqlite3_bind_text(stmt, 1, room.c_str(), -1, SQLITE_TRANSIENT);
+
+    uint64_t epoch = 0;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        epoch = static_cast<uint64_t>(sqlite3_column_int64(stmt, 0));
+    }
+
+    sqlite3_finalize(stmt);
+    return epoch;
+}
+
+bool SqliteStorage::store_room_key_envelope(uint64_t recipient_user_id,
+                                            const std::string& sender,
+                                            const std::string& room,
+                                            uint64_t epoch,
+                                            const std::string& payload_json) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    const char* sql = "INSERT INTO room_key_envelopes "
+                      "(recipient_id, sender, room, epoch, payload, created_at) "
+                      "VALUES (?, ?, ?, ?, ?, ?)";
+    sqlite3_stmt* stmt = nullptr;
+
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        LOG_ERROR("Failed to prepare store_room_key_envelope: {}", sqlite3_errmsg(db_));
+        return false;
+    }
+
+    auto now = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+
+    sqlite3_bind_int64(stmt, 1, static_cast<int64_t>(recipient_user_id));
+    sqlite3_bind_text(stmt, 2, sender.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, room.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 4, static_cast<int64_t>(epoch));
+    sqlite3_bind_text(stmt, 5, payload_json.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 6, now);
+
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    if (rc != SQLITE_DONE) {
+        LOG_WARN("Failed to queue room key envelope for user {}: {}",
+                 recipient_user_id, sqlite3_errmsg(db_));
+        return false;
+    }
+
+    // Bound the queue per recipient so a member cannot spam another
+    // member's storage without limit. Keep the newest 1000 envelopes.
+    const char* trim_sql =
+        "DELETE FROM room_key_envelopes WHERE recipient_id = ? AND id NOT IN ("
+        "  SELECT id FROM room_key_envelopes WHERE recipient_id = ? "
+        "  ORDER BY id DESC LIMIT 1000"
+        ")";
+    stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, trim_sql, -1, &stmt, nullptr) == SQLITE_OK) {
+        sqlite3_bind_int64(stmt, 1, static_cast<int64_t>(recipient_user_id));
+        sqlite3_bind_int64(stmt, 2, static_cast<int64_t>(recipient_user_id));
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+
+    return true;
+}
+
+std::vector<RoomKeyEnvelope> SqliteStorage::take_room_key_envelopes(uint64_t recipient_user_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    std::vector<RoomKeyEnvelope> envelopes;
+
+    const char* select_sql = "SELECT id, sender, room, epoch, payload FROM room_key_envelopes "
+                             "WHERE recipient_id = ? ORDER BY id ASC";
+    sqlite3_stmt* stmt = nullptr;
+
+    if (sqlite3_prepare_v2(db_, select_sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return envelopes;
+    }
+
+    sqlite3_bind_int64(stmt, 1, static_cast<int64_t>(recipient_user_id));
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        RoomKeyEnvelope env;
+        env.id = static_cast<uint64_t>(sqlite3_column_int64(stmt, 0));
+        env.sender = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        env.room = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+        env.epoch = static_cast<uint64_t>(sqlite3_column_int64(stmt, 3));
+        env.payload = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+        envelopes.push_back(std::move(env));
+    }
+
+    sqlite3_finalize(stmt);
+
+    if (!envelopes.empty()) {
+        const char* delete_sql = "DELETE FROM room_key_envelopes WHERE recipient_id = ?";
+        stmt = nullptr;
+        if (sqlite3_prepare_v2(db_, delete_sql, -1, &stmt, nullptr) == SQLITE_OK) {
+            sqlite3_bind_int64(stmt, 1, static_cast<int64_t>(recipient_user_id));
+            sqlite3_step(stmt);
+            sqlite3_finalize(stmt);
+        }
+    }
+
+    return envelopes;
 }
 
 bool SqliteStorage::is_healthy() {
