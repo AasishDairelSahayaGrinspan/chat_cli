@@ -53,6 +53,12 @@ ftxui::Element UiRenderer::render_chat(const DisplayItem& item, const Theme& the
         );
     }
 
+    if (item.encrypted) {
+        parts.push_back(
+            ftxui::text("\xF0\x9F\x94\x92 ") | ftxui::color(theme.success)
+        );
+    }
+
     parts.push_back(
         ftxui::text(item.sender) | ftxui::bold | ftxui::color(theme.username)
     );

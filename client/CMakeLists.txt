@@ -8,6 +8,7 @@ add_executable(chat_client
     message_store.cpp
     banner.cpp
     crypto.cpp
+    group_manager.cpp
 )
 
 target_include_directories(chat_client PRIVATE

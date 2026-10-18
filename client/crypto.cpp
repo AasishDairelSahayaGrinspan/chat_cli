@@ -1,4 +1,5 @@
 #include "crypto.hpp"
+#include "crypto/room_crypto.hpp"
 #include "logging/logger.hpp"
 #include <fstream>
 #include <filesystem>
@@ -13,29 +14,44 @@ KeyManager::KeyManager() {
 }
 
 bool KeyManager::load_or_create(const std::string& key_dir) {
-    if (load_keypair(key_dir)) {
-        initialized_ = true;
+    bool box_ok = load_keypair(key_dir);
+    if (!box_ok) {
+        // Generate new box keypair
+        crypto_box_keypair(public_key_, secret_key_);
+        box_ok = save_keypair(key_dir);
+        if (!box_ok) {
+            LOG_WARN("Generated E2EE keypair but failed to save to disk");
+        } else {
+            LOG_INFO("Generated new E2EE keypair in {}", key_dir);
+        }
+    } else {
         LOG_INFO("Loaded E2EE keypair from {}", key_dir);
-        return true;
     }
 
-    // Generate new keypair
-    crypto_box_keypair(public_key_, secret_key_);
-
-    if (save_keypair(key_dir)) {
-        initialized_ = true;
-        LOG_INFO("Generated new E2EE keypair in {}", key_dir);
-        return true;
+    // Signing keypair: loaded if present, generated on first run (existing
+    // installs predating room E2EE simply get a fresh signing identity).
+    if (!load_signing_keypair(key_dir)) {
+        crypto_sign_keypair(signing_public_key_, signing_secret_key_);
+        if (!save_signing_keypair(key_dir)) {
+            LOG_WARN("Generated Ed25519 signing keypair but failed to save to disk");
+        } else {
+            LOG_INFO("Generated new Ed25519 signing keypair in {}", key_dir);
+        }
+    } else {
+        LOG_DEBUG("Loaded Ed25519 signing keypair from {}", key_dir);
     }
 
-    // Even if save fails, we can still use the keys in memory
+    // Even if saving failed, we can still use the keys in memory
     initialized_ = true;
-    LOG_WARN("Generated E2EE keypair but failed to save to disk");
     return true;
 }
 
 std::string KeyManager::get_public_key() const {
     return to_base64(public_key_, crypto_box_PUBLICKEYBYTES);
+}
+
+std::string KeyManager::get_signing_public_key() const {
+    return to_base64(signing_public_key_, crypto_sign_PUBLICKEYBYTES);
 }
 
 std::string KeyManager::get_fingerprint() const {
@@ -44,6 +60,12 @@ std::string KeyManager::get_fingerprint() const {
         return b64.substr(0, 8) + "...";
     }
     return b64;
+}
+
+std::string KeyManager::get_identity_fingerprint() const {
+    crypto::Bytes x_pk(public_key_, public_key_ + crypto_box_PUBLICKEYBYTES);
+    crypto::Bytes ed_pk(signing_public_key_, signing_public_key_ + crypto_sign_PUBLICKEYBYTES);
+    return crypto::identity_fingerprint(x_pk, ed_pk);
 }
 
 std::optional<EncryptedMessage> KeyManager::encrypt(
@@ -217,6 +239,61 @@ bool KeyManager::load_keypair(const std::string& key_dir) {
         return true;
     } catch (const std::exception& e) {
         LOG_WARN("Failed to load keypair: {}", e.what());
+        return false;
+    }
+}
+
+bool KeyManager::save_signing_keypair(const std::string& key_dir) {
+    try {
+        std::filesystem::create_directories(key_dir);
+
+        std::string pk_path = key_dir + "/signing.pub";
+        std::string sk_path = key_dir + "/signing.key";
+
+        std::ofstream pk_file(pk_path, std::ios::binary);
+        if (!pk_file) return false;
+        pk_file.write(reinterpret_cast<const char*>(signing_public_key_),
+                      crypto_sign_PUBLICKEYBYTES);
+
+        std::ofstream sk_file(sk_path, std::ios::binary);
+        if (!sk_file) return false;
+        sk_file.write(reinterpret_cast<const char*>(signing_secret_key_),
+                      crypto_sign_SECRETKEYBYTES);
+
+        // Set restrictive permissions on the secret signing key
+        std::filesystem::permissions(sk_path,
+            std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+            std::filesystem::perm_options::replace);
+
+        return true;
+    } catch (const std::exception& e) {
+        LOG_WARN("Failed to save signing keypair: {}", e.what());
+        return false;
+    }
+}
+
+bool KeyManager::load_signing_keypair(const std::string& key_dir) {
+    try {
+        std::string pk_path = key_dir + "/signing.pub";
+        std::string sk_path = key_dir + "/signing.key";
+
+        if (!std::filesystem::exists(pk_path) || !std::filesystem::exists(sk_path)) {
+            return false;
+        }
+
+        std::ifstream pk_file(pk_path, std::ios::binary);
+        if (!pk_file) return false;
+        pk_file.read(reinterpret_cast<char*>(signing_public_key_), crypto_sign_PUBLICKEYBYTES);
+        if (pk_file.gcount() != crypto_sign_PUBLICKEYBYTES) return false;
+
+        std::ifstream sk_file(sk_path, std::ios::binary);
+        if (!sk_file) return false;
+        sk_file.read(reinterpret_cast<char*>(signing_secret_key_), crypto_sign_SECRETKEYBYTES);
+        if (sk_file.gcount() != crypto_sign_SECRETKEYBYTES) return false;
+
+        return true;
+    } catch (const std::exception& e) {
+        LOG_WARN("Failed to load signing keypair: {}", e.what());
         return false;
     }
 }
