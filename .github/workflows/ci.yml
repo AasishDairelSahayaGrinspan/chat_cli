@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build & test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Dependencies ──
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake pkg-config \
+            libssl-dev libsqlite3-dev libsodium-dev
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install openssl@3 sqlite libsodium pkg-config cmake
+
+      # ── Configure ──
+      - name: Configure (Linux)
+        if: runner.os == 'Linux'
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
+
+      - name: Configure (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          OPENSSL_DIR="$(brew --prefix openssl@3)"
+          SQLITE_DIR="$(brew --prefix sqlite)"
+          SODIUM_DIR="$(brew --prefix libsodium)"
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON \
+            -DOPENSSL_ROOT_DIR="$OPENSSL_DIR" \
+            -DCMAKE_PREFIX_PATH="$OPENSSL_DIR;$SQLITE_DIR;$SODIUM_DIR"
+
+      # ── Build ──
+      - name: Build
+        run: cmake --build build --parallel
+
+      # ── Test ──
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure
