@@ -7,16 +7,50 @@
 
 namespace chat::server {
 
+namespace {
+
+// Base64 field validation with a size cap (room E2EE payloads).
+bool is_valid_b64_field(const std::string& s, size_t max_len) {
+    if (s.empty() || s.size() > max_len) {
+        return false;
+    }
+    for (char c : s) {
+        bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                  (c >= '0' && c <= '9') || c == '+' || c == '/' || c == '=';
+        if (!ok) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Sender key ids are short lowercase hex strings.
+bool is_valid_hex_key_id(const std::string& s) {
+    if (s.empty() || s.size() > 32) {
+        return false;
+    }
+    for (char c : s) {
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
+
 CommandHandler::CommandHandler(ConnectionManager& conn_manager,
                               SessionManager& session_manager,
                               AuthService& auth_service,
                               RoomManager& room_manager,
-                              storage::IStorage& storage)
+                              storage::IStorage& storage,
+                              bool room_e2ee_required)
     : conn_manager_(conn_manager),
       session_manager_(session_manager),
       auth_service_(auth_service),
       room_manager_(room_manager),
-      storage_(storage) {}
+      storage_(storage),
+      room_e2ee_required_(room_e2ee_required) {}
 
 void CommandHandler::handle(Connection::Ptr conn, const protocol::Message& msg) {
     // Rate limiting
@@ -56,6 +90,14 @@ void CommandHandler::handle(Connection::Ptr conn, const protocol::Message& msg) 
             } else {
                 send_error(conn, "Please login first", "NOT_AUTHENTICATED");
             }
+            break;
+
+        case protocol::MessageType::ROOM_KEY:
+            handle_room_key(conn, msg);
+            break;
+
+        case protocol::MessageType::ENCRYPTED_MESSAGE:
+            handle_encrypted_message(conn, msg);
             break;
 
         default:
@@ -107,6 +149,15 @@ void CommandHandler::handle_login(Connection::Ptr conn, const nlohmann::json& pa
 
     std::string username = payload["username"];
     std::string password = payload["password"];
+
+    // Protocol version (v2 = encrypted room messages). Old clients can
+    // still authenticate, but they cannot read room traffic when the
+    // server requires room E2EE.
+    int client_version = payload.value("protocol_version", 1);
+    if (client_version < protocol::PROTOCOL_VERSION) {
+        LOG_WARN("User '{}' logged in with outdated protocol v{} (server protocol v{})",
+                 username, client_version, protocol::PROTOCOL_VERSION);
+    }
 
     // Brute-force protection: check lockout
     {
@@ -167,6 +218,8 @@ void CommandHandler::handle_login(Connection::Ptr conn, const nlohmann::json& pa
         {"success", true},
         {"user_id", user_id},
         {"username", username},
+        {"protocol_version", protocol::PROTOCOL_VERSION},
+        {"room_e2ee_required", room_e2ee_required_},
         {"message", "Welcome back, " + username + "!"}
     };
     conn->send(response);
@@ -245,11 +298,17 @@ void CommandHandler::handle_join(Connection::Ptr conn, const nlohmann::json& pay
         response.payload = {
             {"action", "joined"},
             {"room", room},
-            {"users", room_manager_.get_room_users(room)}
+            {"users", room_manager_.get_room_users(room)},
+            {"epoch", storage_.room_epoch(room)},
+            {"e2ee", room_e2ee_required_}
         };
         conn->send(response);
 
-        send_system(conn, "You joined #" + room);
+        send_system(conn, "You joined #" + room +
+            (room_e2ee_required_ ? " (end-to-end encrypted)" : ""));
+
+        // Deliver any sender-key envelopes queued while we were offline.
+        deliver_room_key_envelopes(conn);
     } else {
         send_error(conn, "Failed to join room", "JOIN_FAILED");
     }
@@ -477,6 +536,10 @@ Available commands:
   /rename <newname>             - Change your username
   /quit                         - Disconnect from server
   /help                         - Show this help message
+
+Room messages are end-to-end encrypted. Client-side commands:
+  /verify <user> [ok|accept]    - Show/confirm a peer's identity fingerprint
+  /roomkeys                     - Show room encryption state and member keys
 )";
 
     send_system(conn, help);
@@ -538,6 +601,16 @@ void CommandHandler::handle_chat_message(Connection::Ptr conn, const protocol::M
             handle_command(conn, payload);
             return;
         }
+    }
+
+    // When the server requires room E2EE (protocol v2), plaintext room
+    // messages are refused outright instead of being broadcast.
+    if (room_e2ee_required_) {
+        send_error(conn,
+                   "This server requires end-to-end encrypted room messages. "
+                   "Please upgrade your client (protocol v2).",
+                   "E2EE_REQUIRED");
+        return;
     }
 
     // Store message
@@ -665,6 +738,179 @@ void CommandHandler::handle_key_exchange(Connection::Ptr conn, const nlohmann::j
     } else {
         send_error(conn, "Unknown key exchange action: " + action, "INVALID_KEY_EXCHANGE");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Room E2EE (protocol v2)
+// ---------------------------------------------------------------------------
+
+bool CommandHandler::is_room_member(Connection::Ptr conn, const std::string& room) {
+    for (const auto& member : conn_manager_.get_room_members(room)) {
+        if (member->id() == conn->id()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void CommandHandler::deliver_room_key_envelopes(Connection::Ptr conn) {
+    auto envelopes = storage_.take_room_key_envelopes(conn->user_id());
+    for (const auto& env : envelopes) {
+        auto payload = nlohmann::json::parse(env.payload, nullptr, false);
+        if (payload.is_discarded()) {
+            LOG_WARN("Dropping corrupt queued room key envelope {} for '{}'", env.id, conn->username());
+            continue;
+        }
+
+        auto msg = protocol::Message::create(protocol::MessageType::ROOM_KEY, env.sender, env.room);
+        msg.payload = payload;
+        conn->send(msg);
+    }
+
+    if (!envelopes.empty()) {
+        LOG_DEBUG("Delivered {} queued room key envelope(s) to '{}'",
+                  envelopes.size(), conn->username());
+    }
+}
+
+void CommandHandler::handle_room_key(Connection::Ptr conn, const protocol::Message& msg) {
+    if (!require_auth(conn)) {
+        return;
+    }
+
+    const auto& payload = msg.payload;
+    if (!payload.is_object() ||
+        !payload.contains("recipient") || !payload.contains("epoch") ||
+        !payload.contains("key_id") || !payload.contains("nonce") ||
+        !payload.contains("box") || !payload.contains("signature") ||
+        !payload.contains("sender_x25519") || !payload.contains("sender_ed25519")) {
+        send_error(conn, "Invalid room key envelope", "INVALID_ROOM_KEY");
+        return;
+    }
+
+    if (msg.room.empty() || !is_room_member(conn, msg.room)) {
+        send_error(conn, "You are not in room #" + msg.room, "NOT_IN_ROOM");
+        return;
+    }
+
+    std::string recipient = payload.value("recipient", "");
+    if (!AuthService::is_valid_username(recipient) || recipient == conn->username()) {
+        send_error(conn, "Invalid envelope recipient", "INVALID_ROOM_KEY");
+        return;
+    }
+
+    uint64_t epoch = payload.value("epoch", uint64_t(0));
+    if (epoch == 0) {
+        send_error(conn, "Invalid envelope epoch", "INVALID_ROOM_KEY");
+        return;
+    }
+
+    std::string key_id = payload.value("key_id", "");
+    if (!is_valid_hex_key_id(key_id)) {
+        send_error(conn, "Invalid envelope key id", "INVALID_ROOM_KEY");
+        return;
+    }
+
+    if (!is_valid_b64_field(payload.value("nonce", std::string()), protocol::MAX_ROOM_NONCE_B64_LENGTH) ||
+        !is_valid_b64_field(payload.value("box", std::string()), protocol::MAX_ROOM_KEY_B64_LENGTH) ||
+        !is_valid_b64_field(payload.value("signature", std::string()), protocol::MAX_ROOM_SIGNATURE_B64_LENGTH) ||
+        !is_valid_b64_field(payload.value("sender_x25519", std::string()), protocol::MAX_ROOM_PUBKEY_B64_LENGTH) ||
+        !is_valid_b64_field(payload.value("sender_ed25519", std::string()), protocol::MAX_ROOM_PUBKEY_B64_LENGTH)) {
+        send_error(conn, "Invalid room key envelope fields", "INVALID_ROOM_KEY");
+        return;
+    }
+
+    // Relay to the recipient when they are online, otherwise queue the
+    // envelope for their next login/join. The server never sees the
+    // plaintext chain key inside the box.
+    auto recipient_conn = conn_manager_.get_by_username(recipient);
+    if (recipient_conn) {
+        if (!is_room_member(recipient_conn, msg.room)) {
+            send_error(conn, "Recipient is not in room #" + msg.room, "RECIPIENT_NOT_IN_ROOM");
+            return;
+        }
+
+        auto relay = protocol::Message::create(protocol::MessageType::ROOM_KEY,
+                                               conn->username(), msg.room);
+        relay.id = msg.id;
+        relay.timestamp = msg.timestamp;
+        relay.payload = payload;
+        recipient_conn->send(relay);
+        return;
+    }
+
+    auto recipient_user = storage_.get_user_by_username(recipient);
+    if (!recipient_user.has_value()) {
+        send_error(conn, "Recipient not found", "RECIPIENT_NOT_FOUND");
+        return;
+    }
+
+    if (!storage_.store_room_key_envelope(recipient_user->id, conn->username(),
+                                          msg.room, epoch, payload.dump())) {
+        send_error(conn, "Failed to queue room key envelope", "QUEUE_FAILED");
+        return;
+    }
+}
+
+void CommandHandler::handle_encrypted_message(Connection::Ptr conn, const protocol::Message& msg) {
+    if (!require_auth(conn)) {
+        return;
+    }
+
+    const std::string& room = msg.room;
+    if (room.empty()) {
+        send_error(conn, "Encrypted message requires a room", "INVALID_PARAMS");
+        return;
+    }
+
+    if (!is_room_member(conn, room)) {
+        send_error(conn, "You are not in room #" + room, "NOT_IN_ROOM");
+        return;
+    }
+
+    const auto& payload = msg.payload;
+    if (!payload.is_object() ||
+        !payload.contains("epoch") || !payload.contains("key_id") ||
+        !payload.contains("index") || !payload.contains("nonce") ||
+        !payload.contains("ciphertext") || !payload.contains("signature")) {
+        send_error(conn, "Invalid encrypted message", "INVALID_ENCRYPTED_MESSAGE");
+        return;
+    }
+
+    uint64_t epoch = payload.value("epoch", uint64_t(0));
+    std::string key_id = payload.value("key_id", "");
+    int64_t index = payload.value("index", int64_t(-1));
+
+    if (epoch == 0 || !is_valid_hex_key_id(key_id) || index < 0) {
+        send_error(conn, "Invalid encrypted message metadata", "INVALID_ENCRYPTED_MESSAGE");
+        return;
+    }
+
+    if (!is_valid_b64_field(payload.value("nonce", std::string()), protocol::MAX_ROOM_NONCE_B64_LENGTH) ||
+        !is_valid_b64_field(payload.value("ciphertext", std::string()), protocol::MAX_ROOM_CIPHERTEXT_B64_LENGTH) ||
+        !is_valid_b64_field(payload.value("signature", std::string()), protocol::MAX_ROOM_SIGNATURE_B64_LENGTH)) {
+        send_error(conn, "Invalid encrypted message fields", "INVALID_ENCRYPTED_MESSAGE");
+        return;
+    }
+
+    // Persist the ciphertext for room history. The server stores it
+    // verbatim and cannot decrypt it.
+    storage::StoredMessage stored;
+    stored.message_id = msg.id;
+    stored.sender_id = conn->user_id();
+    stored.room = room;
+    stored.content = payload.dump();
+    stored.created_at = msg.timestamp;
+    storage_.store_message(stored);
+
+    // Broadcast to all room members (including the sender's other devices),
+    // preserving the original message id for sender echo handling.
+    auto relay = protocol::Message::create(protocol::MessageType::ENCRYPTED_MESSAGE,
+                                           conn->username(), room);
+    relay.id = msg.id;
+    relay.timestamp = msg.timestamp;
+    relay.payload = payload;
+    room_manager_.broadcast(room, relay);
 }
 
 } // namespace chat::server

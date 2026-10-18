@@ -49,6 +49,11 @@ public:
     void set_current_room(uint64_t conn_id, const std::string& room);
 
 private:
+    // Bump the room epoch and tell all members to rotate their sender keys.
+    void broadcast_membership(const std::string& room,
+                              const std::string& action,
+                              const std::string& user);
+
     ConnectionManager& conn_manager_;
     storage::IStorage& storage_;
 

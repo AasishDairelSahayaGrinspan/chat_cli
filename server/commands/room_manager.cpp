@@ -27,6 +27,10 @@ bool RoomManager::join(Connection::Ptr conn, const std::string& room) {
     };
     broadcast_except(room, conn->id(), msg);
 
+    // Rotate room keys: the new member must not be able to read older
+    // epochs, so everyone regenerates sender keys on membership change.
+    broadcast_membership(room, "join", conn->username());
+
     LOG_INFO("User '{}' joined room '{}'", conn->username(), room);
     return true;
 }
@@ -55,23 +59,30 @@ bool RoomManager::leave(Connection::Ptr conn, const std::string& room) {
     };
     broadcast(room, msg);
 
+    // Rotate room keys: the leaving member must not be able to read
+    // subsequent epochs.
+    broadcast_membership(room, "leave", conn->username());
+
     LOG_INFO("User '{}' left room '{}'", conn->username(), room);
     return true;
 }
 
 void RoomManager::leave_all(Connection::Ptr conn) {
     auto rooms = conn_manager_.get_rooms(conn->id());
+    conn_manager_.remove_from_all_rooms(conn->id());
+
     for (const auto& room : rooms) {
-        // Notify room members
+        // Notify room members (the leaving connection is already removed)
         auto msg = protocol::Message::create(protocol::MessageType::PRESENCE, conn->username(), room);
         msg.payload = {
             {"action", "leave"},
             {"user", conn->username()}
         };
-        broadcast_except(room, conn->id(), msg);
-    }
+        broadcast(room, msg);
 
-    conn_manager_.remove_from_all_rooms(conn->id());
+        // Rotate keys for the remaining members.
+        broadcast_membership(room, "leave", conn->username());
+    }
 
     {
         std::unique_lock lock(mutex_);
@@ -128,6 +139,28 @@ std::string RoomManager::get_current_room(uint64_t conn_id) {
 void RoomManager::set_current_room(uint64_t conn_id, const std::string& room) {
     std::unique_lock lock(mutex_);
     current_rooms_[conn_id] = room;
+}
+
+void RoomManager::broadcast_membership(const std::string& room,
+                                       const std::string& action,
+                                       const std::string& user) {
+    uint64_t epoch = storage_.bump_room_epoch(room);
+    if (epoch == 0) {
+        LOG_WARN("Failed to bump room epoch for '{}'", room);
+        return;
+    }
+
+    auto msg = protocol::Message::create(protocol::MessageType::ROOM_MEMBERSHIP, user, room);
+    msg.payload = {
+        {"action", action},
+        {"user", user},
+        {"room", room},
+        {"epoch", epoch},
+        {"members", get_room_users(room)}
+    };
+    broadcast(room, msg);
+
+    LOG_INFO("Room '{}' epoch rotated to {} ({} by {})", room, epoch, action, user);
 }
 
 } // namespace chat::server
