@@ -95,6 +95,10 @@ private:
     std::mutex login_mutex_;
     std::unordered_map<std::string, LoginAttempt> login_attempts_;
 
+    // Serializes the duplicate-login check + takeover + registration so two
+    // concurrent logins cannot both win the username race.
+    std::mutex session_takeover_mutex_;
+
     static constexpr size_t MAX_LOGIN_ATTEMPTS = 5;
     static constexpr size_t LOGIN_LOCKOUT_SECONDS = 900; // 15 minutes
 };

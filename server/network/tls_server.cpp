@@ -1,6 +1,9 @@
 #include "tls_server.hpp"
 #include "logging/logger.hpp"
 
+#include <netinet/tcp.h>
+#include <sys/socket.h>
+
 namespace chat::server {
 
 TlsServer::TlsServer(const config::ServerConfig& config)
@@ -140,6 +143,29 @@ void TlsServer::do_accept() {
                 } catch (...) {}
 
                 connection_manager_.add(conn);
+
+                // Enable TCP keepalive so connections whose peer vanished
+                // without a clean close (crashed client, dropped network)
+                // are reaped in ~2 minutes instead of holding resources
+                // (and duplicate-login slots) indefinitely.
+                {
+                    std::error_code kerr;
+                    conn->socket().set_option(asio::socket_base::keep_alive(true), kerr);
+                    if (!kerr) {
+                        int idle = 120;   // seconds idle before first probe
+#if defined(TCP_KEEPIDLE) && defined(TCP_KEEPINTVL) && defined(TCP_KEEPCNT)
+                        int intvl = 30;   // seconds between probes
+                        int cnt = 4;      // failed probes before close
+                        int fd = conn->socket().native_handle();
+                        setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
+                        setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
+                        setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt));
+#elif defined(TCP_KEEPALIVE)
+                        int fd = conn->socket().native_handle();
+                        setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, &idle, sizeof(idle));
+#endif
+                    }
+                }
 
                 if (new_connection_handler_) {
                     new_connection_handler_(conn);

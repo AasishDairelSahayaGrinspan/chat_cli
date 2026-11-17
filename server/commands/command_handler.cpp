@@ -193,23 +193,43 @@ void CommandHandler::handle_login(Connection::Ptr conn, const nlohmann::json& pa
         return;
     }
 
-    // Check if already logged in elsewhere
-    if (auto existing = conn_manager_.get_by_username(username)) {
-        send_error(conn, "User already logged in from another location", "ALREADY_LOGGED_IN");
-        return;
+    // Check if already logged in elsewhere -> session takeover.
+    // If another live connection holds this username (e.g. a client that
+    // crashed without a clean /quit, or a second window), the newest login
+    // wins and the stale connection is closed cleanly. This removes the
+    // old failure mode where a crashed client kept the username locked
+    // until a server restart.
+    {
+        std::lock_guard<std::mutex> takeover_lock(session_takeover_mutex_);
+
+        if (auto existing = conn_manager_.get_by_username(username)) {
+            LOG_INFO("User '{}' logging in on connection {}; closing stale connection {}",
+                     username, conn->id(), existing->id());
+
+            send_system(existing,
+                        "Your account was just logged in from another location. Disconnecting this session.");
+            auto presence = protocol::Message::create(protocol::MessageType::PRESENCE, existing->username());
+            presence.payload = {{"action", "offline"}, {"user", existing->username()}};
+            conn_manager_.broadcast_except(existing->id(), presence);
+
+            room_manager_.leave_all(existing);
+            session_manager_.remove(existing->id());
+            conn_manager_.remove(existing);
+            existing->close();
+        }
+
+        // Authenticate session
+        if (!session_manager_.authenticate(conn->id(), user_id, username)) {
+            send_error(conn, "Failed to create session", "SESSION_ERROR");
+            return;
+        }
+
+        conn->set_user_id(user_id);
+        conn->set_username(username);
+
+        // Register in connection manager so get_by_username works
+        conn_manager_.register_username(username, conn);
     }
-
-    // Authenticate session
-    if (!session_manager_.authenticate(conn->id(), user_id, username)) {
-        send_error(conn, "Failed to create session", "SESSION_ERROR");
-        return;
-    }
-
-    conn->set_user_id(user_id);
-    conn->set_username(username);
-
-    // Register in connection manager so get_by_username works
-    conn_manager_.register_username(username, conn);
 
 
     // Send success response
