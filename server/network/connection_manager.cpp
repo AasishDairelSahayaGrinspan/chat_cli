@@ -18,9 +18,15 @@ void ConnectionManager::remove(uint64_t conn_id) {
 
     auto it = connections_.find(conn_id);
     if (it != connections_.end()) {
-        // Remove from username index
+        // Remove from username index only if it still points at this
+        // connection. After a session takeover a new connection may own the
+        // username by the time a delayed error handler runs for the old one;
+        // erasing unconditionally would drop the new login's mapping.
         if (!it->second->username().empty()) {
-            username_index_.erase(it->second->username());
+            auto uit = username_index_.find(it->second->username());
+            if (uit != username_index_.end() && uit->second->id() == conn_id) {
+                username_index_.erase(uit);
+            }
         }
 
         // Remove from all rooms

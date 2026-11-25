@@ -19,7 +19,11 @@ int main(int argc, char* argv[]) {
             verify_ssl = false;
             std::cerr << "WARNING: TLS certificate verification disabled. "
                       << "Do not use in production." << std::endl;
-        } else if (arg == "--ca-cert" && i + 1 < argc) {
+        } else if (arg == "--ca-cert") {
+            if (i + 1 >= argc) {
+                std::cerr << "Missing value for --ca-cert" << std::endl;
+                return 1;
+            }
             ca_cert_path = argv[++i];
         } else if (arg == "--help" || arg == "-h") {
             std::cout << "Usage: chat_client [host] [port] [options]\n"
@@ -41,7 +45,13 @@ int main(int argc, char* argv[]) {
     }
     if (positional.size() > 1) {
         try {
-            port = static_cast<uint16_t>(std::stoi(positional[1]));
+            size_t consumed = 0;
+            const std::string& text = positional[1];
+            long value = std::stol(text, &consumed);
+            if (consumed != text.size() || value < 1 || value > 65535) {
+                throw std::out_of_range("port");
+            }
+            port = static_cast<uint16_t>(value);
         } catch (...) {
             std::cerr << "Invalid port: " << positional[1] << std::endl;
             return 1;

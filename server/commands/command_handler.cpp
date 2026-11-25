@@ -206,6 +206,18 @@ void CommandHandler::handle_login(Connection::Ptr conn, const nlohmann::json& pa
             LOG_INFO("User '{}' logging in on connection {}; closing stale connection {}",
                      username, conn->id(), existing->id());
 
+            // Release the old session first: authenticate() refuses a
+            // username that is still bound to another live session. Only the
+            // session bookkeeping is dropped here - the old socket stays up
+            // until the replacement session has been created.
+            session_manager_.remove(existing->id());
+
+            if (!session_manager_.authenticate(conn->id(), user_id, username)) {
+                send_error(conn, "Failed to create session", "SESSION_ERROR");
+                return;
+            }
+
+            // New session is live: notify and disconnect the old connection.
             send_system(existing,
                         "Your account was just logged in from another location. Disconnecting this session.");
             auto presence = protocol::Message::create(protocol::MessageType::PRESENCE, existing->username());
@@ -213,15 +225,14 @@ void CommandHandler::handle_login(Connection::Ptr conn, const nlohmann::json& pa
             conn_manager_.broadcast_except(existing->id(), presence);
 
             room_manager_.leave_all(existing);
-            session_manager_.remove(existing->id());
             conn_manager_.remove(existing);
             existing->close();
-        }
-
-        // Authenticate session
-        if (!session_manager_.authenticate(conn->id(), user_id, username)) {
-            send_error(conn, "Failed to create session", "SESSION_ERROR");
-            return;
+        } else {
+            // Authenticate session
+            if (!session_manager_.authenticate(conn->id(), user_id, username)) {
+                send_error(conn, "Failed to create session", "SESSION_ERROR");
+                return;
+            }
         }
 
         conn->set_user_id(user_id);
